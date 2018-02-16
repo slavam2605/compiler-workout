@@ -32,16 +32,13 @@ let empty = fun x -> failwith (Printf.sprintf "Undefined variable %s" x)
 *)
 let update x v s = fun y -> if x = y then v else s y
 
-(* An example of a non-trivial state: *)                                                   
-let s = update "x" 1 @@ update "y" 2 @@ update "z" 3 @@ update "t" 4 empty
+let (@$) f g = fun x y -> f @@ g x y;;
 
-(* Some testing; comment this definition out when submitting the solution. *)
-let _ =
-  List.iter
-    (fun x ->
-       try  Printf.printf "%s=%d\n" x @@ s x
-       with Failure s -> Printf.printf "%s\n" s
-    ) ["x"; "a"; "y"; "z"; "t"; "b"]
+let (@^) f g = fun x y -> f (g x) (g y);;
+
+let b2i b = if b then 1 else 0;;
+
+let i2b x = x <> 0;;
 
 (* Expression evaluator
 
@@ -50,5 +47,26 @@ let _ =
    Takes a state and an expression, and returns the value of the expression in 
    the given state.
 *)
-let eval = failwith "Not implemented yet"
-                    
+let rec eval state expr = match expr with
+  | Const x -> x
+  | Var z   -> state z
+  | Binop (op, left, right) -> 
+    let leftR = eval state left in
+    let rightR = eval state right in
+    let opR = match op with
+      | "+"  -> ( + )
+      | "-"  -> ( - )
+      | "*"  -> ( * )
+      | "/"  -> ( / )
+      | "%"  -> (mod)
+      | "<"  -> b2i @$ (<)
+      | ">"  -> b2i @$ (>)
+      | "<=" -> b2i @$ (<=)
+      | ">=" -> b2i @$ (>=)
+      | "==" -> b2i @$ (=)
+      | "!=" -> b2i @$ (<>)
+      | "&&" -> b2i @$ (&&) @^ i2b
+      | "!!" -> b2i @$ (||) @^ i2b
+      | _ -> failwith @@ Printf.sprintf "Unknown operator %s" op in
+      opR leftR rightR
+;;
