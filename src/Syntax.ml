@@ -34,6 +34,27 @@ module Expr =
     *)
     let update x v s = fun y -> if x = y then v else s y
 
+    let evalOp op = 
+      let (@$) f g = fun x y -> f @@ g x y in
+      let (@^) f g = fun x y -> f (g x) (g y) in
+      let b2i b = if b then 1 else 0 in
+      let i2b x = x <> 0 in match op with
+        | "+"  -> ( + )
+        | "-"  -> ( - )
+        | "*"  -> ( * )
+        | "/"  -> ( / )
+        | "%"  -> (mod)
+        | "<"  -> b2i @$ (<)
+        | ">"  -> b2i @$ (>)
+        | "<=" -> b2i @$ (<=)
+        | ">=" -> b2i @$ (>=)
+        | "==" -> b2i @$ (=)
+        | "!=" -> b2i @$ (<>)
+        | "&&" -> b2i @$ (&&) @^ i2b
+        | "!!" -> b2i @$ (||) @^ i2b
+        | _ -> failwith @@ Printf.sprintf "Unknown operator %s" op
+    ;;
+
     (* Expression evaluator
 
           val eval : state -> t -> int
@@ -41,34 +62,14 @@ module Expr =
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
     *)
-    let rec eval state expr = 
-      let (@$) f g = fun x y -> f @@ g x y in
-      let (@^) f g = fun x y -> f (g x) (g y) in
-      let b2i b = if b then 1 else 0 in
-      let i2b x = x <> 0 in match expr with
-        | Const x -> x
-        | Var z   -> state z
-        | Binop (op, left, right) -> 
-          let leftR = eval state left in
-          let rightR = eval state right in
-          let opR = match op with
-            | "+"  -> ( + )
-            | "-"  -> ( - )
-            | "*"  -> ( * )
-            | "/"  -> ( / )
-            | "%"  -> (mod)
-            | "<"  -> b2i @$ (<)
-            | ">"  -> b2i @$ (>)
-            | "<=" -> b2i @$ (<=)
-            | ">=" -> b2i @$ (>=)
-            | "==" -> b2i @$ (=)
-            | "!=" -> b2i @$ (<>)
-            | "&&" -> b2i @$ (&&) @^ i2b
-            | "!!" -> b2i @$ (||) @^ i2b
-            | _ -> failwith @@ Printf.sprintf "Unknown operator %s" op in
-            opR leftR rightR
+    let rec eval state expr = match expr with
+      | Const x -> x
+      | Var z   -> state z
+      | Binop (op, left, right) -> 
+        let leftR = eval state left in
+        let rightR = eval state right in
+        evalOp op leftR rightR
     ;;
-
   end
                     
 (* Simple statements: syntax and sematics *)
@@ -91,10 +92,11 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let eval (s, z::i, o) (Read x)        = (Expr.update x z s, i, o)
-    let eval (s, i, o)    (Write e)       = (s, i, o @ [Expr.eval s e])
-    let eval (s, i, o)    (Assign (x, e)) = (Expr.update x (Expr.eval s e) s, i, o)
-    let rec eval config (Seq (t1, t2))    = eval (eval config t1) t2
+    let rec eval config stmt = match config, stmt with
+      | (s, z::i, o), (Read x)        -> (Expr.update x z s, i, o)
+      | (s, i, o),    (Write e)       -> (s, i, o @ [Expr.eval s e])
+      | (s, i, o),    (Assign (x, e)) -> (Expr.update x (Expr.eval s e) s, i, o)
+      | _,            (Seq (t1, t2))  -> let config' = eval config t1 in eval config' t2
                                                          
   end
 
