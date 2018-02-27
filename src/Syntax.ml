@@ -41,7 +41,33 @@ module Expr =
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
     *)
-    let eval _ = failwith "Not implemented yet"
+    let rec eval state expr = 
+      let (@$) f g = fun x y -> f @@ g x y in
+      let (@^) f g = fun x y -> f (g x) (g y) in
+      let b2i b = if b then 1 else 0 in
+      let i2b x = x <> 0 in match expr with
+        | Const x -> x
+        | Var z   -> state z
+        | Binop (op, left, right) -> 
+          let leftR = eval state left in
+          let rightR = eval state right in
+          let opR = match op with
+            | "+"  -> ( + )
+            | "-"  -> ( - )
+            | "*"  -> ( * )
+            | "/"  -> ( / )
+            | "%"  -> (mod)
+            | "<"  -> b2i @$ (<)
+            | ">"  -> b2i @$ (>)
+            | "<=" -> b2i @$ (<=)
+            | ">=" -> b2i @$ (>=)
+            | "==" -> b2i @$ (=)
+            | "!=" -> b2i @$ (<>)
+            | "&&" -> b2i @$ (&&) @^ i2b
+            | "!!" -> b2i @$ (||) @^ i2b
+            | _ -> failwith @@ Printf.sprintf "Unknown operator %s" op in
+            opR leftR rightR
+    ;;
 
   end
                     
@@ -65,6 +91,9 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let eval _ = failwith "Not implemented yet"
+    let eval (s, z::i, o) (Read x)        = (Expr.update x z s, i, o)
+    let eval (s, i, o)    (Write e)       = (s, i, o @ [Expr.eval s e])
+    let eval (s, i, o)    (Assign (x, e)) = (Expr.update x (Expr.eval s e) s, i, o)
+    let rec eval config (Seq (t1, t2))    = eval (eval config t1) t2
                                                          
   end
