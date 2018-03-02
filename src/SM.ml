@@ -1,7 +1,7 @@
 open GT       
 open Language
-open Syntax.Expr
-open Syntax.Stmt
+open Language.Expr
+open Language.Stmt
 
 (* The type for the stack machine instructions *)
 @type insn =
@@ -21,12 +21,12 @@ type prg = insn list
 type config = int list * Stmt.config
 
 let evalInsn config insn = match config, insn with
-	| (y::x::stack, conf),   (BINOP op) -> ((Syntax.Expr.evalOp op x y)::stack, conf)
+	| (y::x::stack, conf),   (BINOP op) -> ((Language.Expr.evalOp op x y)::stack, conf)
 	| (stack, conf),         (CONST x)  -> (x::stack, conf)
 	| (stack, (s, x::i, o)), READ       -> (x::stack, (s, i, o))
 	| (x::stack, (s, i, o)), WRITE      -> (stack, (s, i, o @ [x]))
 	| (stack, (s, i, o)),    (LD z)     -> ((s z)::stack, (s, i, o))
-	| (x::stack, (s, i, o)), (ST z)     -> (stack, (Syntax.Expr.update z x s, i, o))
+	| (x::stack, (s, i, o)), (ST z)     -> (stack, (Language.Expr.update z x s, i, o))
 
 (* Stack machine interpreter
 
@@ -45,7 +45,7 @@ let rec eval config prg = match prg with
 
    Takes an input stream, a program, and returns an output stream this program calculates
 *)
-let run i p = let (_, (_, _, o)) = eval ([], (Syntax.Expr.empty, i, [])) p in o;;
+let run i p = let (_, (_, _, o)) = eval ([], (Language.Expr.empty, i, [])) p in o;;
 
 let rec compileExpr expr = match expr with
 	| Const x            -> [CONST x]

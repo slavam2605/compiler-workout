@@ -5,6 +5,7 @@ open GT
 
 (* Opening a library for combinator-based syntax analysis *)
 open Ostap.Combinators
+open Ostap
        
 (* Simple expressions: syntax and semantics *)
 module Expr =
@@ -74,6 +75,16 @@ module Expr =
         evalOp op leftR rightR
     ;;
 
+    let opsByPriority = function
+      | 0 -> ["!!"]
+      | 1 -> ["&&"]
+      | 2 -> ["<="; ">="; "<"; ">"; "=="; "!="]
+      | 3 -> ["+"; "-"]
+      | 4 -> ["*"; "/"; "%"]
+    ;;
+
+    let parserOps n = List.map (fun op -> (ostap ($(op)), fun x y -> Binop (op, x, y))) @@ opsByPriority n;;
+
     (* Expression parser. You can use the following terminals:
 
          IDENT   --- a non-empty identifier a-zA-Z[a-zA-Z0-9_]* as a string
@@ -81,7 +92,23 @@ module Expr =
    
     *)
     ostap (
-      parse: empty {failwith "Not implemented yet"}
+      parse: expr;
+
+      expr: !(Util.expr
+        (fun x -> x)
+        [|
+          `Lefta, parserOps 0;
+          `Lefta, parserOps 1;
+          `Nona,  parserOps 2;
+          `Lefta, parserOps 3;
+          `Lefta, parserOps 4
+        |]
+        primary
+      );
+
+      primary: z:IDENT {Var z} 
+             | x:DECIMAL {Const x} 
+             | -"(" expr -")"
     )
 
   end
@@ -112,9 +139,19 @@ module Stmt =
       | (s, i, o),    (Assign (x, e)) -> (Expr.update x (Expr.eval s e) s, i, o)
       | _,            (Seq (t1, t2))  -> let config' = eval config t1 in eval config' t2
 
+    let rec reduce l f = match l with
+      | x::y::rest -> reduce ((f x y)::rest) f
+      | [x] -> x
+
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not implemented yet"}
+      parse: stmt_list;
+
+      stmt_list: l:!(Util.listBy)[ostap (";")][stmt] {reduce l @@ fun a b -> Seq (a, b)};
+
+      stmt: "read" "(" z:IDENT ")" {Read z}
+          | "write" "(" e:!(Expr.parse) ")" {Write e}
+          | left:IDENT ":=" right:!(Expr.parse) {Assign (left, right)}
     )
       
   end
