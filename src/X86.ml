@@ -89,7 +89,11 @@ let rec compile env code =
     | CONST n -> let s, env = env#allocate in env, [Mov (L n, s)]
     | BINOP op -> let sx, sy, env = env#pop2 in 
                   let s, env = env#allocate in env, match op with
-      | "+" | "-" | "*" | "&&" | "!!" -> [Binop (op, sx, sy)]
+      | "+" | "-" | "*" -> [Binop (op, sx, sy); Mov (sy, s)]
+      | "&&" | "!!" -> [Binop ("^", eax, eax); Binop ("^", edx, edx);
+                        Binop ("cmp", L 0, sx); Set ("nz", "%al"); 
+                        Binop ("cmp", L 0, sy); Set ("nz", "%dl"); 
+                        Binop (op, eax, edx); Mov (edx, s)]
       | "<" | ">" | "<=" | ">=" | "==" | "!=" -> let suf = match op with
         | "<" -> "l"
         | ">" -> "g"
