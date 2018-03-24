@@ -97,13 +97,16 @@ let rec compile env code =
   in 
   let binop = function
     | (op, a, b) -> if is_mem a && is_mem b then [Mov (b, eax); Binop (op, a, eax); Mov (eax, b)] else [Binop (op, a, b)]
-  in 
+  in
   let step env ins = match ins with
     | ST x -> let s, env = (env#global x)#pop in env, mov (s, M (env#loc x))
     | LD x -> let s, env = (env#global x)#allocate in env, mov (M (env#loc x), s)
     | READ -> let s, env = env#allocate in env, [Call "Lread"; Mov (eax, s)]
     | WRITE -> let s, env = env#pop in env, [Push s; Call "Lwrite"; Pop eax]
     | CONST n -> let s, env = env#allocate in env, [Mov (L n, s)]
+    | LABEL s -> env, [Label s]
+    | JMP l -> env, [Jmp l]
+    | CJMP (f, l) -> let s, env = env#pop in env, [Binop ("cmp", L 0, s); CJmp (f, l)]
     | BINOP op -> let sx, sy, env = env#pop2 in 
                   let s, env = env#allocate in env, match op with
       | "+" | "-" | "*" -> binop (op, sx, sy) @ mov (sy, s)

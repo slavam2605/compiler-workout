@@ -114,7 +114,7 @@ module Stmt =
     (* empty statement                  *) | Skip
     (* conditional                      *) | If     of Expr.t * t * t
     (* loop with a pre-condition        *) | While  of Expr.t * t
-    (* loop with a post-condition       *) (* add yourself *)  with show
+    (* loop with a post-condition       *) | Repeat of Expr.t * t with show
                                                                     
     (* The type of configuration: a state, an input stream, an output stream *)
     type config = Expr.state * int list * int list 
@@ -127,19 +127,39 @@ module Stmt =
     *)
     let rec eval ((st, i, o) as conf) stmt =
       match stmt with
-      | Read    x       -> (match i with z::i' -> (Expr.update x z st, i', o) | _ -> failwith "Unexpected end of input")
-      | Write   e       -> (st, i, o @ [Expr.eval st e])
-      | Assign (x, e)   -> (Expr.update x (Expr.eval st e) st, i, o)
-      | Seq    (s1, s2) -> eval (eval conf s1) s2
-                               
+      | Read    x          -> (match i with z::i' -> (Expr.update x z st, i', o) | _ -> failwith "Unexpected end of input")
+      | Write   e          -> (st, i, o @ [Expr.eval st e])
+      | Assign (x, e)      -> (Expr.update x (Expr.eval st e) st, i, o)
+      | Seq    (s1, s2)    -> eval (eval conf s1) s2
+      | Skip               -> conf
+      | If     (e, s1, s2) -> if Expr.eval st e != 0 then eval conf s1 else eval conf s2
+      | While  (e, s)      -> if Expr.eval st e != 0 then eval (eval conf s) stmt else conf
+      | Repeat (e, s)      -> let (st_, i_, o_) as conf_ = eval conf s in 
+                                if Expr.eval st_ e == 0 then eval conf_ stmt else conf_
+
     (* Statement parser *)
     ostap (
       parse:
         s:stmt ";" ss:parse {Seq (s, ss)}
       | stmt;
       stmt:
-        "read" "(" x:IDENT ")"          {Read x}
-      | "write" "(" e:!(Expr.parse) ")" {Write e}
+        %"read" "(" x:IDENT ")"          {Read x}
+      | %"write" "(" e:!(Expr.parse) ")" {Write e}
+      | %"skip" {Skip}
+      | %"while" e:!(Expr.parse) %"do" t:parse %"od" {While (e, t)}
+      | %"for" t1:parse "," e:!(Expr.parse) "," t2:parse %"do" t3:parse %"od" {Seq (t1, While (e, Seq (t3, t2)))}
+      | %"repeat" t:parse %"until" e:!(Expr.parse) {Repeat (e, t)}
+      | %"if" e:!(Expr.parse) %"then" t:parse 
+        elifs:(%"elif" !(Expr.parse) %"then" parse)* 
+        elseb:(%"else" parse)? %"fi"
+        { 
+          let elseBody = match elseb with
+            | Some t -> t
+            | None -> Skip
+          in
+          let newElseBody = List.fold_right (fun (e_, t_) t -> If (e_, t_, t)) elifs elseBody in
+          If (e, t, newElseBody)
+        }
       | x:IDENT ":=" e:!(Expr.parse)    {Assign (x, e)}            
     )
       
@@ -160,4 +180,4 @@ let eval p i =
   let _, _, o = Stmt.eval (Expr.empty, i, []) p in o
 
 (* Top-level parser *)
-let parse = Stmt.parse                                                     
+let parse = Stmt.parse
