@@ -1,4 +1,5 @@
 open Ostap
+open Analysis
 
 let parse infile =
   let s = Util.read infile in
@@ -20,10 +21,16 @@ let main =
   try
     let interpret  = Sys.argv.(1) = "-i"  in
     let stack      = Sys.argv.(1) = "-s"  in
-    let to_compile = not (interpret || stack) in
+    let analyse    = Sys.argv.(1) = "-a"  in
+    let to_compile = not (interpret || stack || analyse) in
     let infile     = Sys.argv.(if not to_compile then 2 else 1) in
     match parse infile with
     | `Ok prog ->
+      if analyse then
+        let (_, s) = prog in
+        let (exit_result, analyse_tree) = Analysis.forward_analyse s [] (@) (fun _ x -> x) (fun _ x -> x) in
+        Analysis.print_result (fun x -> "[" ^ (String.concat ", " (List.map string_of_int x)) ^ "]") analyse_tree
+      else 
       if to_compile
       then failwith "Not implemented yet (Driver.ml:28)"
         (*            
