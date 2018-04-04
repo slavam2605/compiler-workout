@@ -117,5 +117,39 @@ module Analysis =
         ) (
             fun x y -> x <> y
         )
+        
+    let propagate_constants (prg : Stmt.t) : Stmt.t =
+        let analyse_result = constant_propagation prg in
+        let rec transform state = function
+            | ARead   (x, a)         -> (a, Stmt.Read x) 
+            | AWrite  (e, a)         -> let value = match const_value state e with
+                                            | Some z -> Expr.Const z
+                                            | None   -> e
+                                        in (a, Stmt.Write value)
+            | AAssign (x, e, a)      -> let value = match const_value state e with
+                                            | Some z -> Expr.Const z
+                                            | None   -> e
+                                        in (a, Stmt.Assign (x, value))
+            | ASkip a                -> (a, Stmt.Skip)
+            | ACall   (f, params, a) -> let value_params = List.map (
+                                            fun e -> match const_value state e with
+                                                        | Some z -> Expr.Const z
+                                                        | None   -> e
+                                        ) params in (a, Stmt.Call (f, value_params))
+            | ASeq    (s1, s2, a)    -> let (exit1, ss1) = transform state s1 in
+                                        let (exit2, ss2) = transform exit1 s2 in
+                                        (exit2, Stmt.Seq (ss1, ss2))
+            | AIf     (e, s1, s2, a) -> let (exit1, ss1) = transform state s1 in
+                                        let (exit2, ss2) = transform state s2 in
+                                        let value = match const_value state e with
+                                            | Some z -> Expr.Const z
+                                            | None   -> e
+                                        in
+                                        (exit1 @@@ exit2, Stmt.If (value, ss1, ss2))
+            | AWhile  (e, s, a)      -> let (exit, ss) = transform state s in
+                                        (state @@@ exit, Stmt.While (e, ss))
+            | ARepeat (s, e, a)      -> failwith "Not supported: Repeat"
+        in
+        let (_, result) = transform [] analyse_result in result
     
   end

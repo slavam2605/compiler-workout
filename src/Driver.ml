@@ -34,7 +34,10 @@ let main =
       if analyse then
         let (_, s) = prog in
         let analyse_tree = Analysis.constant_propagation s in
-        Analysis.print_result (fun x -> "[" ^ (String.concat ", " (List.map string_of_pair x)) ^ "]") analyse_tree
+        Analysis.print_result (fun x -> "[" ^ (String.concat ", " (List.map string_of_pair x)) ^ "]") analyse_tree;
+        print_string "\nResult:\n";
+        let result = Analysis.propagate_constants s in
+        print_string (GT.transform(Stmt.t) (new @Stmt.t[show]) () result);
       else 
       if to_compile
       then failwith "Not implemented yet (Driver.ml:28)"
