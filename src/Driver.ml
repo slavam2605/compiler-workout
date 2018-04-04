@@ -1,5 +1,6 @@
 open Ostap
 open Analysis
+open Language
 
 let parse infile =
   let s = Util.read infile in
@@ -17,6 +18,10 @@ let parse infile =
     )
     (ostap (!(Language.parse) -EOF))
 
+let string_of_pair ((a, b) : string * int option) = match b with
+    | Some x -> Printf.sprintf "%s = %d" a x
+    | None   -> Printf.sprintf "%s = None" a
+
 let main =
   try
     let interpret  = Sys.argv.(1) = "-i"  in
@@ -28,8 +33,8 @@ let main =
     | `Ok prog ->
       if analyse then
         let (_, s) = prog in
-        let (exit_result, analyse_tree) = Analysis.forward_analyse s [] (@) (fun _ x -> x) (fun _ x -> x) in
-        Analysis.print_result (fun x -> "[" ^ (String.concat ", " (List.map string_of_int x)) ^ "]") analyse_tree
+        let analyse_tree = Analysis.constant_propagation s in
+        Analysis.print_result (fun x -> "[" ^ (String.concat ", " (List.map string_of_pair x)) ^ "]") analyse_tree
       else 
       if to_compile
       then failwith "Not implemented yet (Driver.ml:28)"
