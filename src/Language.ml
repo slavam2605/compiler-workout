@@ -56,6 +56,21 @@ module Expr =
     (* variable         *) | Var   of string
     (* binary operator  *) | Binop of string * t * t with show
 
+    let priority = function
+        | "*" | "/" | "%"  -> 4
+        | "+" | "-"  -> 3
+        | "<" | "<=" | ">" | ">=" | "==" | "!=" -> 2
+        | "&&" | "!!" -> 1
+
+    let rec pretty_print' p = function
+        | Const z          -> string_of_int z
+        | Var x            -> x
+        | Binop (op, l, r) -> let op_p = priority op in
+                              let inner = pretty_print' op_p l ^ " " ^ op ^ " " ^ pretty_print' op_p r in
+                              if op_p < p then "(" ^ inner ^ ")" else inner
+
+    let pretty_print = pretty_print' 0
+
     (* Available binary operators:
         !!                   --- disjunction
         &&                   --- conjunction
@@ -175,6 +190,32 @@ module Stmt =
                               let ready_sub_state = List.fold_left2 updater sub_state params eval_params in 
                               let (new_state, new_i, new_o) = eval env (ready_sub_state, i, o) body in
                               (State.leave new_state st, new_i, new_o) 
+
+    let rec pretty_print' indent stmt =
+        let next_indent = "    " ^ indent in
+        match stmt with
+        | Seq    (s1, s2)    -> let p1 = pretty_print' indent s1 in
+                                        let p2 = pretty_print' indent s2 in
+                                        p1 ^ ";\n" ^ p2
+        | _ -> indent ^ match stmt with
+            | Read    x          -> "read (" ^ x ^ ")"
+            | Write   e          -> "write (" ^ Expr.pretty_print e ^ ")"
+            | Assign (x, e)      -> x ^ " := " ^ Expr.pretty_print e
+            | Skip               -> "skip"
+            | If     (e, s1, s2) -> "if " ^ Expr.pretty_print e ^ " then\n" ^
+                                        pretty_print' next_indent s1 ^ "\n" ^
+                                    "else\n" ^
+                                        pretty_print' next_indent s2 ^ "\n" ^
+                                    "fi"
+            | While  (e, s)      -> "while " ^ Expr.pretty_print e ^ " do\n" ^
+                                        pretty_print' next_indent s ^ "\n" ^
+                                    "od"
+            | Repeat (s, e)      -> "repeat\n" ^
+                                        pretty_print' next_indent s ^ "\n" ^
+                                    "until " ^ Expr.pretty_print e
+            | Call   (f, params) -> f ^ "(" ^ String.concat ", " (List.map Expr.pretty_print params) ^ ")"
+
+    let pretty_print = pretty_print' ""
 
     (* Statement parser *)
     ostap (
