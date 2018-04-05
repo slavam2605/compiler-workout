@@ -36,7 +36,7 @@ let main =
         let analyse_tree = Analysis.constant_propagation s in
         Analysis.print_result (fun x -> "[" ^ (String.concat ", " (List.map string_of_pair x)) ^ "]") analyse_tree;
         print_string "\nResult:\n";
-        let result = Analysis.propagate_constants s in
+        let result = Analysis.optimize s in
         print_string @@ Stmt.pretty_print result
       else 
       if to_compile

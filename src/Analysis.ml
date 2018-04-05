@@ -75,7 +75,7 @@ module Analysis =
                                              last_exit := exit
                                          done;
                                          let exit = combine !last_exit input in
-                                         (exit, AWhile (e, !annotated_body, (input, exit)), !ever_change)
+                                         (exit, AWhile (e, !annotated_body, (!current_input, exit)), !ever_change)
         | ARepeat (s, e, (_, a))      -> failwith "Not supported: Repeat"
     
     let rec const_value (list (*: [string * int option]*)) (e : Expr.t) : int option = match e with
@@ -147,5 +147,41 @@ module Analysis =
             | ARepeat (s, e, (input, _))      -> failwith "Not supported: Repeat"
         in
         transform analyse_result
-    
+
+    let rec eliminate_useless_statements' (prg : Stmt.t) : bool * Stmt.t = match prg with
+        | Stmt.Seq    (s1, s2)    -> let (cb1, ss1) = eliminate_useless_statements' s1 in
+                                     let (cb2, ss2) = eliminate_useless_statements' s2 in
+                                     if cb1 then (cb1, ss1) else
+                                     (match (ss1, ss2) with
+                                        | _, Stmt.Skip -> (cb1, ss1)
+                                        | Stmt.Skip, _ -> (cb2, ss2)
+                                        | _            -> (cb1 || cb2, Stmt.Seq (ss1, ss2)))
+        | Stmt.If     (e, s1, s2) -> let (cb1, ss1) = eliminate_useless_statements' s1 in
+                                     let (cb2, ss2) = eliminate_useless_statements' s2 in
+                                     (match e with
+                                        | Expr.Const 0 -> (cb2, ss2)
+                                        | Expr.Const _ -> (cb1, ss1)
+                                        | _            -> (cb1 && cb2, Stmt.If (e, s1, s2)))
+        | Stmt.While  (e, s)      -> let (cb, ss) = eliminate_useless_statements' s in
+                                     if cb then eliminate_useless_statements' (Stmt.If (e, ss, Stmt.Skip)) else
+                                     (match e with
+                                        | Expr.Const 0 -> (false, Stmt.Skip)
+                                        | Expr.Const _ -> (true, Stmt.While (e, ss))
+                                        | _            -> (false, Stmt.While (e, ss)))
+        | Stmt.Repeat (s, e)      -> failwith "Not supported: Repeat"
+        | _                       -> (false, prg)
+
+    let eliminate_useless_statements (prg : Stmt.t) : Stmt.t =
+        let (_, result) = eliminate_useless_statements' prg in result
+
+    let optimize (prg : Stmt.t) : Stmt.t =
+        let change = ref true in
+        let old_prg = ref prg in
+        while !change do
+            let new_prg = eliminate_useless_statements @@ propagate_constants !old_prg in
+            change := new_prg <> !old_prg;
+            old_prg := new_prg
+        done;
+        !old_prg
+
   end
