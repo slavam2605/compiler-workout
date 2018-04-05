@@ -5,78 +5,78 @@ module Analysis =
     
     (* Language statement annotated with analyse result *)
     type 'a t =
-        | ARead   of string * 'a
-        | AWrite  of Expr.t * 'a
-        | AAssign of string * Expr.t * 'a
-        | ASeq    of 'a t * 'a t * 'a
-        | ASkip   of 'a
-        | AIf     of Expr.t * 'a t * 'a t * 'a
-        | AWhile  of Expr.t * 'a t * 'a
-        | ARepeat of 'a t * Expr.t * 'a
-        | ACall   of string * Expr.t list * 'a
+        | ARead   of string * ('a * 'a)
+        | AWrite  of Expr.t * ('a * 'a)
+        | AAssign of string * Expr.t * ('a * 'a)
+        | ASeq    of 'a t * 'a t * ('a * 'a)
+        | ASkip   of ('a * 'a)
+        | AIf     of Expr.t * 'a t * 'a t * ('a * 'a)
+        | AWhile  of Expr.t * 'a t * ('a * 'a)
+        | ARepeat of 'a t * Expr.t * ('a * 'a)
+        | ACall   of string * Expr.t list * ('a * 'a)
     
     let rec annotate (prg : Stmt.t) (init : 'a) : 'a t = match prg with
-        | Stmt.Read    x          -> ARead (x, init)
-        | Stmt.Write   e          -> AWrite (e, init)
-        | Stmt.Assign (x, e)      -> AAssign (x, e, init)
-        | Stmt.Seq    (s1, s2)    -> ASeq (annotate s1 init, annotate s2 init, init)
-        | Stmt.Skip               -> ASkip init
-        | Stmt.If     (e, s1, s2) -> AIf (e, annotate s1 init, annotate s2 init, init)
-        | Stmt.While  (e, s)      -> AWhile (e, annotate s init, init)
-        | Stmt.Repeat (s, e)      -> ARepeat (annotate s init, e, init)
-        | Stmt.Call   (f, params) -> ACall (f, params, init)
+        | Stmt.Read    x          -> ARead (x, (init, init))
+        | Stmt.Write   e          -> AWrite (e, (init, init))
+        | Stmt.Assign (x, e)      -> AAssign (x, e, (init, init))
+        | Stmt.Seq    (s1, s2)    -> ASeq (annotate s1 init, annotate s2 init, (init, init))
+        | Stmt.Skip               -> ASkip (init, init)
+        | Stmt.If     (e, s1, s2) -> AIf (e, annotate s1 init, annotate s2 init, (init, init))
+        | Stmt.While  (e, s)      -> AWhile (e, annotate s init, (init, init))
+        | Stmt.Repeat (s, e)      -> ARepeat (annotate s init, e, (init, init))
+        | Stmt.Call   (f, params) -> ACall (f, params, (init, init))
     
     let rec print_result elem_printer = function
-        | ARead   (_, a)       -> print_string @@ "ARead "   ^ elem_printer a; print_string "\n"
-        | AWrite  (_, a)       -> print_string @@ "AWrite "  ^ elem_printer a; print_string "\n"
-        | AAssign (_, _, a)    -> print_string @@ "AAssign " ^ elem_printer a; print_string "\n"
-        | ASeq    (l, r, a)    -> print_result elem_printer l;
-                                  print_result elem_printer r
-        | ASkip   a            -> print_string @@ "ASkip "   ^ elem_printer a; print_string "\n"
-        | AIf     (_, l, r, a) -> print_string "// if\n";
-                                  print_result elem_printer l;
-                                  print_string "// else\n";
-                                  print_result elem_printer r;
-                                  print_string @@ "// if-end " ^ elem_printer a; print_string "\n"
-        | AWhile  (_, b, a)    -> print_string "// while\n";
-                                  print_result elem_printer b;
-                                  print_string @@ "// while-end " ^ elem_printer a; print_string "\n"
-        | ARepeat (b, _, a)    -> print_string "// repeat\n";
-                                  print_result elem_printer b;
-                                  print_string @@ "// repeat-end " ^ elem_printer a; print_string "\n"
-        | ACall   (_, _, a)    -> print_string @@ "ACall "   ^ elem_printer a; print_string "\n"
+        | ARead   (_, (a1, a2))       -> print_string @@ "ARead "   ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
+        | AWrite  (_, (a1, a2))       -> print_string @@ "AWrite "  ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
+        | AAssign (_, _, (a1, a2))    -> print_string @@ "AAssign " ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
+        | ASeq    (l, r, (a1, a2))    -> print_result elem_printer l;
+                                         print_result elem_printer r
+        | ASkip   (a1, a2)            -> print_string @@ "ASkip "   ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
+        | AIf     (_, l, r, (a1, a2)) -> print_string "// if\n";
+                                         print_result elem_printer l;
+                                         print_string "// else\n";
+                                         print_result elem_printer r;
+                                         print_string @@ "// if-end " ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
+        | AWhile  (_, b, (a1, a2))    -> print_string "// while\n";
+                                         print_result elem_printer b;
+                                         print_string @@ "// while-end " ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
+        | ARepeat (b, _, (a1, a2))    -> print_string "// repeat\n";
+                                         print_result elem_printer b;
+                                         print_string @@ "// repeat-end " ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
+        | ACall   (_, _, (a1, a2))    -> print_string @@ "ACall "   ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
     
-    let rec forward_analyse' (aprg : 'a t) (init : 'a) (combine : 'a -> 'a -> 'a) (kill : 'a t -> 'a -> 'a) (gen : 'a t -> 'a -> 'a) (change : 'a -> 'a -> bool) : 'a * 'a t * bool = 
-        let exit_analysis = gen aprg (kill aprg init) in
+    let rec forward_analyse' (aprg : 'a t) (input : 'a) (combine : 'a -> 'a -> 'a) (kill : 'a t -> 'a -> 'a) (gen : 'a t -> 'a -> 'a) (change : 'a -> 'a -> bool) : 'a * 'a t * bool =
+        let exit_analysis = gen aprg (kill aprg input) in
         match aprg with
-        | ARead   (x, a)         -> (exit_analysis, ARead (x, exit_analysis), change a exit_analysis) 
-        | AWrite  (e, a)         -> (exit_analysis, AWrite (e, exit_analysis), change a exit_analysis)
-        | AAssign (x, e, a)      -> (exit_analysis, AAssign (x, e, exit_analysis), change a exit_analysis)
-        | ASkip a                -> (exit_analysis, ASkip exit_analysis, change a exit_analysis)
-        | ACall   (f, params, a) -> (exit_analysis, ACall (f, params, exit_analysis), change a exit_analysis)
-        | ASeq    (s1, s2, a)    -> let (exit1, as1, change1) = forward_analyse' s1 init combine kill gen change in
-                                    let (exit2, as2, change2) = forward_analyse' s2 exit1 combine kill gen change in
-                                    (exit2, ASeq (as1, as2, exit2), change1 || change2 || change a exit2)
-        | AIf     (e, s1, s2, a) -> let (exit1, as1, change1) = forward_analyse' s1 init combine kill gen change in
-                                    let (exit2, as2, change2) = forward_analyse' s2 init combine kill gen change in
-                                    let exit = combine exit1 exit2 in
-                                    (exit, AIf (e, as1, as2, exit), change1 || change2 || change a exit)
-        | AWhile  (e, s, a)      -> let global_change = ref true in
-                                    let annotated_body = ref s in
-                                    let current_init = ref init in
-                                    let ever_change = ref false in
-                                    let last_exit = ref init in 
-                                    while !global_change do
-                                        let (exit, new_body, changed) = forward_analyse' !annotated_body !current_init combine kill gen change in
-                                        current_init := combine init exit;
-                                        annotated_body := new_body;
-                                        global_change := changed;
-                                        if changed then ever_change := true;
-                                        last_exit := exit
-                                    done;
-                                    let exit = combine !last_exit init in
-                                    (exit, AWhile (e, !annotated_body, exit), !ever_change)
-        | ARepeat (s, e, a)      -> failwith "Not supported: Repeat"
+        | ARead   (x, (_, a))         -> (exit_analysis, ARead (x, (input, exit_analysis)), change a exit_analysis)
+        | AWrite  (e, (_, a))         -> (exit_analysis, AWrite (e, (input, exit_analysis)), change a exit_analysis)
+        | AAssign (x, e, (_, a))      -> (exit_analysis, AAssign (x, e, (input, exit_analysis)), change a exit_analysis)
+        | ASkip (_, a)                -> (exit_analysis, ASkip (input, exit_analysis), change a exit_analysis)
+        | ACall   (f, params, (_, a)) -> (exit_analysis, ACall (f, params, (input, exit_analysis)), change a exit_analysis)
+        | ASeq    (s1, s2, (_, a))    -> let (exit1, as1, change1) = forward_analyse' s1 input combine kill gen change in
+                                         let (exit2, as2, change2) = forward_analyse' s2 exit1 combine kill gen change in
+                                         (exit2, ASeq (as1, as2, (input, exit2)), change1 || change2 || change a exit2)
+        | AIf     (e, s1, s2, (_, a)) -> let (exit1, as1, change1) = forward_analyse' s1 input combine kill gen change in
+                                         let (exit2, as2, change2) = forward_analyse' s2 input combine kill gen change in
+                                         let exit = combine exit1 exit2 in
+                                         (exit, AIf (e, as1, as2, (input, exit)), change1 || change2 || change a exit)
+        | AWhile  (e, s, (_, a))      -> let global_change = ref true in
+                                         let annotated_body = ref s in
+                                         let current_input = ref input in
+                                         let ever_change = ref false in
+                                         let last_exit = ref input in
+                                         while !global_change do
+                                             let (exit, new_body, changed) = forward_analyse' !annotated_body !current_input combine kill gen change in
+                                             current_input := combine input exit;
+                                             annotated_body := new_body;
+                                             global_change := changed;
+                                             if changed then ever_change := true;
+                                             last_exit := exit
+                                         done;
+                                         let exit = combine !last_exit input in
+                                         (exit, AWhile (e, !annotated_body, (input, exit)), !ever_change)
+        | ARepeat (s, e, (_, a))      -> failwith "Not supported: Repeat"
     
     let rec const_value (list (*: [string * int option]*)) (e : Expr.t) : int option = match e with
         | Expr.Const z            -> Some z
@@ -117,39 +117,35 @@ module Analysis =
         ) (
             fun x y -> x <> y
         )
-        
+
+    let fold_const state e =
+        match const_value state e with
+            | Some z -> Expr.Const z
+            | None   -> e
+
     let propagate_constants (prg : Stmt.t) : Stmt.t =
         let analyse_result = constant_propagation prg in
-        let rec transform state = function
-            | ARead   (x, a)         -> (a, Stmt.Read x) 
-            | AWrite  (e, a)         -> let value = match const_value state e with
-                                            | Some z -> Expr.Const z
-                                            | None   -> e
-                                        in (a, Stmt.Write value)
-            | AAssign (x, e, a)      -> let value = match const_value state e with
-                                            | Some z -> Expr.Const z
-                                            | None   -> e
-                                        in (a, Stmt.Assign (x, value))
-            | ASkip a                -> (a, Stmt.Skip)
-            | ACall   (f, params, a) -> let value_params = List.map (
-                                            fun e -> match const_value state e with
-                                                        | Some z -> Expr.Const z
-                                                        | None   -> e
-                                        ) params in (a, Stmt.Call (f, value_params))
-            | ASeq    (s1, s2, a)    -> let (exit1, ss1) = transform state s1 in
-                                        let (exit2, ss2) = transform exit1 s2 in
-                                        (exit2, Stmt.Seq (ss1, ss2))
-            | AIf     (e, s1, s2, a) -> let (exit1, ss1) = transform state s1 in
-                                        let (exit2, ss2) = transform state s2 in
-                                        let value = match const_value state e with
-                                            | Some z -> Expr.Const z
-                                            | None   -> e
-                                        in
-                                        (exit1 @@@ exit2, Stmt.If (value, ss1, ss2))
-            | AWhile  (e, s, a)      -> let (exit, ss) = transform state s in
-                                        (state @@@ exit, Stmt.While (e, ss))
-            | ARepeat (s, e, a)      -> failwith "Not supported: Repeat"
+        let rec transform = function
+            | ARead   (x, (input, _))         -> Stmt.Read x
+            | AWrite  (e, (input, _))         -> let value = fold_const input e in
+                                                 Stmt.Write value
+            | AAssign (x, e, (input, _))      -> let value = fold_const input e in
+                                                 Stmt.Assign (x, value)
+            | ASkip (input, _)                -> Stmt.Skip
+            | ACall   (f, params, (input, _)) -> let value_params = List.map (fold_const input) params in
+                                                 Stmt.Call (f, value_params)
+            | ASeq    (s1, s2, (input, _))    -> let ss1 = transform s1 in
+                                                 let ss2 = transform s2 in
+                                                 Stmt.Seq (ss1, ss2)
+            | AIf     (e, s1, s2, (input, _)) -> let ss1 = transform s1 in
+                                                 let ss2 = transform s2 in
+                                                 let value = fold_const input e in
+                                                 Stmt.If (value, ss1, ss2)
+            | AWhile  (e, s, (input, _))      -> let ss = transform s in
+                                                 let value = fold_const input e in
+                                                 Stmt.While (value, ss)
+            | ARepeat (s, e, (input, _))      -> failwith "Not supported: Repeat"
         in
-        let (_, result) = transform [] analyse_result in result
+        transform analyse_result
     
   end
