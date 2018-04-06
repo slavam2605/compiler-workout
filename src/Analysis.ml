@@ -45,20 +45,28 @@ module Analysis =
                                          print_result elem_printer b;
                                          print_string @@ "// repeat-end " ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
         | ACall   (_, _, (a1, a2))    -> print_string @@ "ACall "   ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
-    
-    let rec forward_analyse' (aprg : 'a t) (input : 'a) (combine : 'a -> 'a -> 'a) (kill : 'a t -> 'a -> 'a) (gen : 'a t -> 'a -> 'a) (change : 'a -> 'a -> bool) : 'a * 'a t * bool =
-        let exit_analysis = gen aprg (kill aprg input) in
+
+    type 'a monotone_framework = {
+        init : 'a;                    (* Initial analysis for entry (or exit) point *)
+        zero : 'a;                    (* Identity with respect to `combine`: forall a. combine a zero = combine zero a = a *)
+        combine : 'a -> 'a -> 'a;     (* Combine function (usually set union or intersection) *)
+        transfer : 'a t -> 'a -> 'a;  (* Transfer function (usually `transfer prg a = gen prg (kill prg a)` *)
+        change : 'a -> 'a -> bool     (* Inequality predicate, `change a b == true` means that `a is not equal to b` *)
+    }
+
+    let rec forward_analyse' (aprg : 'a t) (input : 'a) (combine : 'a -> 'a -> 'a) (transfer : 'a t -> 'a -> 'a) (change : 'a -> 'a -> bool) : 'a * 'a t * bool =
+        let exit_analysis = transfer aprg input in
         match aprg with
         | ARead   (x, (_, a))         -> (exit_analysis, ARead (x, (input, exit_analysis)), change a exit_analysis)
         | AWrite  (e, (_, a))         -> (exit_analysis, AWrite (e, (input, exit_analysis)), change a exit_analysis)
         | AAssign (x, e, (_, a))      -> (exit_analysis, AAssign (x, e, (input, exit_analysis)), change a exit_analysis)
         | ASkip (_, a)                -> (exit_analysis, ASkip (input, exit_analysis), change a exit_analysis)
         | ACall   (f, params, (_, a)) -> (exit_analysis, ACall (f, params, (input, exit_analysis)), change a exit_analysis)
-        | ASeq    (s1, s2, (_, a))    -> let (exit1, as1, change1) = forward_analyse' s1 input combine kill gen change in
-                                         let (exit2, as2, change2) = forward_analyse' s2 exit1 combine kill gen change in
+        | ASeq    (s1, s2, (_, a))    -> let (exit1, as1, change1) = forward_analyse' s1 input combine transfer change in
+                                         let (exit2, as2, change2) = forward_analyse' s2 exit1 combine transfer change in
                                          (exit2, ASeq (as1, as2, (input, exit2)), change1 || change2 || change a exit2)
-        | AIf     (e, s1, s2, (_, a)) -> let (exit1, as1, change1) = forward_analyse' s1 input combine kill gen change in
-                                         let (exit2, as2, change2) = forward_analyse' s2 input combine kill gen change in
+        | AIf     (e, s1, s2, (_, a)) -> let (exit1, as1, change1) = forward_analyse' s1 input combine transfer change in
+                                         let (exit2, as2, change2) = forward_analyse' s2 input combine transfer change in
                                          let exit = combine exit1 exit2 in
                                          (exit, AIf (e, as1, as2, (input, exit)), change1 || change2 || change a exit)
         | AWhile  (e, s, (_, a))      -> let global_change = ref true in
@@ -67,7 +75,7 @@ module Analysis =
                                          let ever_change = ref false in
                                          let last_exit = ref input in
                                          while !global_change do
-                                             let (exit, new_body, changed) = forward_analyse' !annotated_body !current_input combine kill gen change in
+                                             let (exit, new_body, changed) = forward_analyse' !annotated_body !current_input combine transfer change in
                                              current_input := combine input exit;
                                              annotated_body := new_body;
                                              global_change := changed;
@@ -77,7 +85,10 @@ module Analysis =
                                          let exit = combine !last_exit input in
                                          (exit, AWhile (e, !annotated_body, (!current_input, exit)), !ever_change)
         | ARepeat (s, e, (_, a))      -> failwith "Not supported: Repeat"
-    
+
+    let forward_analyse (prg : Stmt.t) (framework : 'a monotone_framework) : 'a t =
+            let (_, tree, _) = forward_analyse' (annotate prg framework.zero) framework.init framework.combine framework.transfer framework.change in tree
+
     let rec const_value (list (*: [string * int option]*)) (e : Expr.t) : int option = match e with
         | Expr.Const z            -> Some z
         | Expr.Var x              -> (match List.fold_left (
@@ -96,27 +107,29 @@ module Analysis =
                                          | (Some x, Some y) -> Some (Expr.to_func op x y)
                                          | _ -> None
     
-    let rec forward_analyse (prg : Stmt.t) (init : 'a) (combine : 'a -> 'a -> 'a) (kill : 'a t -> 'a -> 'a) (gen : 'a t -> 'a -> 'a) (change : 'a -> 'a -> bool) : 'a t =
-        let (_, tree, _) = forward_analyse' (annotate prg init) init combine kill gen change in tree
-    
     let rec unique = function
         | []      -> []
         | x::rest -> x :: unique (List.filter (fun y -> x <> y) rest)
     
     let (@@@) (list1 : 'a list) (list2 : 'a list) : 'a list = unique @@ list1 @ list2
-    
-    let constant_propagation (prg : Stmt.t) (*: [string * int option]*) =
-        forward_analyse prg [] (@@@) (
-            fun s list -> match s with
-                | AAssign (x, _, _) -> List.filter (fun (y, _) -> x <> y) list
-                | _ -> list
-        ) (
-            fun s list -> match s with
-                | AAssign (x, e, _) -> (x, const_value list e) :: list
-                | _ -> list
-        ) (
-            fun x y -> x <> y
-        )
+
+    let constant_propagation (prg : Stmt.t) =
+        let kill s list = match s with
+            | AAssign (x, _, _) -> List.filter (fun (y, _) -> x <> y) list
+            | _ -> list
+        in
+        let gen s list = match s with
+            | AAssign (x, e, _) -> (x, const_value list e) :: list
+            | _ -> list
+        in
+        let (<*>) f g = fun a b -> g a (f a b) in
+        forward_analyse prg {
+            init = [];
+            zero = [];
+            combine = (@@@);
+            transfer = kill <*> gen;
+            change = (<>)
+        }
 
     let fold_const state e =
         match const_value state e with
