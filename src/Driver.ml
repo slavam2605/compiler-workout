@@ -33,10 +33,10 @@ let main =
     | `Ok prog ->
       if analyse then
         let (_, s) = prog in
-        let analyse_tree = Analysis.constant_propagation s in
-        Analysis.print_result (fun x -> "[" ^ (String.concat ", " (List.map string_of_pair x)) ^ "]") analyse_tree;
+        let analyse_tree = ConstantPropagation.constant_propagation s in
+        MonotoneFramework.print_result (fun x -> "[" ^ (String.concat ", " (List.map string_of_pair x)) ^ "]") analyse_tree;
         print_string "\nResult:\n";
-        let result = Analysis.optimize s in
+        let result = Optimizations.optimize s in
         print_string @@ Stmt.pretty_print result
       else 
       if to_compile

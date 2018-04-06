@@ -1,6 +1,6 @@
 open Language
 
-module Analysis = 
+module MonotoneFramework = 
   struct
     
     (* Language statement annotated with analyse result *)
@@ -89,6 +89,12 @@ module Analysis =
     let forward_analyse (prg : Stmt.t) (framework : 'a monotone_framework) : 'a t =
             let (_, tree, _) = forward_analyse' (annotate prg framework.zero) framework.init framework.combine framework.transfer framework.change in tree
 
+  end
+  
+module ConstantPropagation =
+  struct
+    module M = MonotoneFramework
+  
     let rec const_value (list (*: [string * int option]*)) (e : Expr.t) : int option = match e with
         | Expr.Const z            -> Some z
         | Expr.Var x              -> (match List.fold_left (
@@ -115,15 +121,15 @@ module Analysis =
 
     let constant_propagation (prg : Stmt.t) =
         let kill s list = match s with
-            | AAssign (x, _, _) -> List.filter (fun (y, _) -> x <> y) list
+            | M.AAssign (x, _, _) -> List.filter (fun (y, _) -> x <> y) list
             | _ -> list
         in
         let gen s list = match s with
-            | AAssign (x, e, _) -> (x, const_value list e) :: list
+            | M.AAssign (x, e, _) -> (x, const_value list e) :: list
             | _ -> list
         in
         let (<*>) f g = fun a b -> g a (f a b) in
-        forward_analyse prg {
+        MonotoneFramework.forward_analyse prg {
             init = [];
             zero = [];
             combine = (@@@);
@@ -139,28 +145,33 @@ module Analysis =
     let propagate_constants (prg : Stmt.t) : Stmt.t =
         let analyse_result = constant_propagation prg in
         let rec transform = function
-            | ARead   (x, (input, _))         -> Stmt.Read x
-            | AWrite  (e, (input, _))         -> let value = fold_const input e in
-                                                 Stmt.Write value
-            | AAssign (x, e, (input, _))      -> let value = fold_const input e in
-                                                 Stmt.Assign (x, value)
-            | ASkip (input, _)                -> Stmt.Skip
-            | ACall   (f, params, (input, _)) -> let value_params = List.map (fold_const input) params in
-                                                 Stmt.Call (f, value_params)
-            | ASeq    (s1, s2, (input, _))    -> let ss1 = transform s1 in
-                                                 let ss2 = transform s2 in
-                                                 Stmt.Seq (ss1, ss2)
-            | AIf     (e, s1, s2, (input, _)) -> let ss1 = transform s1 in
-                                                 let ss2 = transform s2 in
-                                                 let value = fold_const input e in
-                                                 Stmt.If (value, ss1, ss2)
-            | AWhile  (e, s, (input, _))      -> let ss = transform s in
-                                                 let value = fold_const input e in
-                                                 Stmt.While (value, ss)
-            | ARepeat (s, e, (input, _))      -> failwith "Not supported: Repeat"
+            | M.ARead   (x, (input, _))         -> Stmt.Read x
+            | M.AWrite  (e, (input, _))         -> let value = fold_const input e in
+                                                   Stmt.Write value
+            | M.AAssign (x, e, (input, _))      -> let value = fold_const input e in
+                                                   Stmt.Assign (x, value)
+            | M.ASkip (input, _)                -> Stmt.Skip
+            | M.ACall   (f, params, (input, _)) -> let value_params = List.map (fold_const input) params in
+                                                   Stmt.Call (f, value_params)
+            | M.ASeq    (s1, s2, (input, _))    -> let ss1 = transform s1 in
+                                                   let ss2 = transform s2 in
+                                                   Stmt.Seq (ss1, ss2)
+            | M.AIf     (e, s1, s2, (input, _)) -> let ss1 = transform s1 in
+                                                   let ss2 = transform s2 in
+                                                   let value = fold_const input e in
+                                                   Stmt.If (value, ss1, ss2)
+            | M.AWhile  (e, s, (input, _))      -> let ss = transform s in
+                                                   let value = fold_const input e in
+                                                   Stmt.While (value, ss)
+            | M.ARepeat (s, e, (input, _))      -> failwith "Not supported: Repeat"
         in
         transform analyse_result
-
+  
+  end
+  
+module EliminateUselessStatements = 
+  struct
+  
     let rec eliminate_useless_statements' (prg : Stmt.t) : bool * Stmt.t = match prg with
         | Stmt.Seq    (s1, s2)    -> let (cb1, ss1) = eliminate_useless_statements' s1 in
                                      let (cb2, ss2) = eliminate_useless_statements' s2 in
@@ -186,15 +197,20 @@ module Analysis =
 
     let eliminate_useless_statements (prg : Stmt.t) : Stmt.t =
         let (_, result) = eliminate_useless_statements' prg in result
-
+        
+  end
+  
+module Optimizations =
+  struct
+  
     let optimize (prg : Stmt.t) : Stmt.t =
         let change = ref true in
         let old_prg = ref prg in
         while !change do
-            let new_prg = eliminate_useless_statements @@ propagate_constants !old_prg in
+            let new_prg = EliminateUselessStatements.eliminate_useless_statements @@ ConstantPropagation.propagate_constants !old_prg in
             change := new_prg <> !old_prg;
             old_prg := new_prg
         done;
         !old_prg
-
+        
   end
