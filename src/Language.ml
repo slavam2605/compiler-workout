@@ -6,6 +6,10 @@ open GT
 (* Opening a library for combinator-based syntax analysis *)
 open Ostap
 open Combinators
+
+let default x opt = match opt with
+        | Some v -> v
+        | None   -> x
                          
 (* States *)
 module State =
@@ -73,8 +77,34 @@ module Expr =
 
        which takes an environment (of the same type), a name of the function, a list of actual parameters and a configuration, 
        an returns a pair: the return value for the call and the resulting configuration
-    *)                                                       
-    let rec eval env ((st, i, o, r) as conf) expr = failwith "Not implemented"
+    *)
+    
+    let to_func op =
+      let bti   = function true -> 1 | _ -> 0 in
+      let itb b = b <> 0 in
+      let (|>) f g   = fun x y -> f (g x y) in
+      match op with
+      | "+"  -> (+)
+      | "-"  -> (-)
+      | "*"  -> ( * )
+      | "/"  -> (/)
+      | "%"  -> (mod)
+      | "<"  -> bti |> (< )
+      | "<=" -> bti |> (<=)
+      | ">"  -> bti |> (> )
+      | ">=" -> bti |> (>=)
+      | "==" -> bti |> (= )
+      | "!=" -> bti |> (<>)
+      | "&&" -> fun x y -> bti (itb x && itb y)
+      | "!!" -> fun x y -> bti (itb x || itb y)
+      | _    -> failwith (Printf.sprintf "Unknown binary operator %s" op)    
+    
+    let rec eval st ((st, i, o, r) as conf) expr =      
+      match expr with
+      | Const n -> n
+      | Var   x -> State.eval st x
+      | Binop (op, x, y) -> to_func op (eval st x) (eval st y)
+      | Call (f, params) -> failwith "Not implemented yet"
          
     (* Expression parser. You can use the following terminals:
 
@@ -82,7 +112,26 @@ module Expr =
          DECIMAL --- a decimal constant [0-9]+ as a string                                                                                                                  
     *)
     ostap (                                      
-      parse: empty {failwith "Not implemented"}
+      parse:
+      !(Ostap.Util.expr 
+             (fun x -> x)
+         (Array.map (fun (a, s) -> a, 
+                           List.map  (fun s -> ostap(- $(s)), (fun x y -> Binop (s, x, y))) s
+                        ) 
+              [|                
+        `Lefta, ["!!"];
+        `Lefta, ["&&"];
+        `Nona , ["=="; "!="; "<="; "<"; ">="; ">"];
+        `Lefta, ["+" ; "-"];
+        `Lefta, ["*" ; "/"; "%"];
+              |] 
+         )
+         primary);
+      
+      primary:
+        n:DECIMAL {Const n}
+      | x:IDENT   {Var x}
+      | -"(" parse -")"
     )
     
   end
@@ -106,16 +155,54 @@ module Stmt =
                                                                     
     (* Statement evaluator
 
-         val eval : env -> config -> t -> config
+         val eval : env -> config -> t -> t -> config
 
-       Takes an environment, a configuration and a statement, and returns another configuration. The 
+       Takes an environment, a configuration, a continuation and a statement, and returns another configuration. The 
        environment is the same as for expressions
     *)
-    let rec eval env ((st, i, o, r) as conf) k stmt = failwith "Not implemented"
-         
+    let rec eval env ((st, i, o, r) as conf) k stmt = match stmt with
+      | Read    x          -> (match i with z::i' -> (State.update x z st, i', o) | _ -> failwith "Unexpected end of input")
+      | Write   e          -> (st, i, o @ [Expr.eval st e])
+      | Assign (x, e)      -> (State.update x (Expr.eval st e) st, i, o)
+      | Seq    (s1, s2)    -> eval env (eval env conf s1) s2
+      | Skip               -> conf
+      | If     (e, s1, s2) -> if Expr.eval st e != 0 then eval env conf s1 else eval env conf s2
+      | While  (e, s)      -> if Expr.eval st e != 0 then eval env (eval env conf s) stmt else conf
+      | Repeat (s, e)      -> let (st_, i_, o_) as conf_ = eval env conf s in 
+                                if Expr.eval st_ e == 0 then eval env conf_ stmt else conf_
+      | Call   (f, params) -> let eval_params = List.map (Expr.eval st) params in
+                              let (params, locals, body) = env#definition f in
+                              let sub_state = State.enter st (params @ locals) in
+                              let updater = (fun state param value -> State.update param value state) in
+                              let ready_sub_state = List.fold_left2 updater sub_state params eval_params in 
+                              let (new_state, new_i, new_o) = eval env (ready_sub_state, i, o) body in
+                              (State.leave new_state st, new_i, new_o) 
+
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not implemented"}
+      parse:
+        s:stmt ";" ss:parse {Seq (s, ss)}
+      | stmt;
+      stmt:
+        %"read" "(" x:IDENT ")"          {Read x}
+      | %"write" "(" e:!(Expr.parse) ")" {Write e}
+      | %"skip" {Skip}
+      | %"while" e:!(Expr.parse) %"do" t:parse %"od" {While (e, t)}
+      | %"for" t1:parse "," e:!(Expr.parse) "," t2:parse %"do" t3:parse %"od" {Seq (t1, While (e, Seq (t3, t2)))}
+      | %"repeat" t:parse %"until" e:!(Expr.parse) {Repeat (t, e)}
+      | %"if" e:!(Expr.parse) %"then" t:parse 
+        elifs:(%"elif" !(Expr.parse) %"then" parse)* 
+        elseb:(%"else" parse)? %"fi"
+        { 
+          let elseBody = match elseb with
+            | Some t -> t
+            | None -> Skip
+          in
+          let newElseBody = List.fold_right (fun (e_, t_) t -> If (e_, t_, t)) elifs elseBody in
+          If (e, t, newElseBody)
+        }
+      | x:IDENT ":=" e:!(Expr.parse)    {Assign (x, e)}
+      | name:IDENT "(" params:(!(Util.list)[ostap (!(Expr.parse))])? ")" {Call (name, default [] params)}            
     )
       
   end
