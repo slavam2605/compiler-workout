@@ -64,6 +64,26 @@ module Expr =
 
     (* The type of configuration: a state, an input stream, an output stream, an optional value *)
     type config = State.t * int list * int list * int option
+                              
+    let to_func op =
+          let bti   = function true -> 1 | _ -> 0 in
+          let itb b = b <> 0 in
+          let (|>) f g   = fun x y -> f (g x y) in
+          match op with
+          | "+"  -> (+)
+          | "-"  -> (-)
+          | "*"  -> ( * )
+          | "/"  -> (/)
+          | "%"  -> (mod)
+          | "<"  -> bti |> (< )
+          | "<=" -> bti |> (<=)
+          | ">"  -> bti |> (> )
+          | ">=" -> bti |> (>=)
+          | "==" -> bti |> (= )
+          | "!=" -> bti |> (<>)
+          | "&&" -> fun x y -> bti (itb x && itb y)
+          | "!!" -> fun x y -> bti (itb x || itb y)
+          | _    -> failwith (Printf.sprintf "Unknown binary operator %s" op)    
                                                             
     (* Expression evaluator
 
@@ -78,33 +98,17 @@ module Expr =
        which takes an environment (of the same type), a name of the function, a list of actual parameters and a configuration, 
        an returns a pair: the return value for the call and the resulting configuration
     *)
-    
-    let to_func op =
-      let bti   = function true -> 1 | _ -> 0 in
-      let itb b = b <> 0 in
-      let (|>) f g   = fun x y -> f (g x y) in
-      match op with
-      | "+"  -> (+)
-      | "-"  -> (-)
-      | "*"  -> ( * )
-      | "/"  -> (/)
-      | "%"  -> (mod)
-      | "<"  -> bti |> (< )
-      | "<=" -> bti |> (<=)
-      | ">"  -> bti |> (> )
-      | ">=" -> bti |> (>=)
-      | "==" -> bti |> (= )
-      | "!=" -> bti |> (<>)
-      | "&&" -> fun x y -> bti (itb x && itb y)
-      | "!!" -> fun x y -> bti (itb x || itb y)
-      | _    -> failwith (Printf.sprintf "Unknown binary operator %s" op)    
-    
-    let rec eval st ((st, i, o, r) as conf) expr =      
+    let rec eval env ((st, i, o, r) as conf) expr =      
       match expr with
-      | Const n -> n
-      | Var   x -> State.eval st x
-      | Binop (op, x, y) -> to_func op (eval st x) (eval st y)
-      | Call (f, params) -> failwith "Not implemented yet"
+      | Const n -> n, conf
+      | Var   x -> State.eval st x, conf
+      | Binop (op, x, y) -> let r1, ((st, i, o, r) as conf) = eval env conf x in 
+                            let r2, ((st, i, o, r) as conf) = eval env conf y in
+                            to_func op r1 r2, conf
+      | Call (f, params) -> let step (conf, list) e = (let v, conf = eval env conf e in conf, list @ [v]) in 
+                            let conf, eval_params = List.fold_left step (conf, []) params in
+                            let ((st, i, o, r) as conf) = env#definition env f eval_params conf in 
+                            (match r with None -> failwith "Function returned nothing" | Some v -> v), conf
          
     (* Expression parser. You can use the following terminals:
 
@@ -130,7 +134,7 @@ module Expr =
       
       primary:
         n:DECIMAL {Const n}
-      | x:IDENT   {Var x}
+      | x:IDENT p:("(" params:!(Util.list0 parse) ")" {Call (x, params)} | empty {Var x}) {p}
       | -"(" parse -")"
     )
     
@@ -160,23 +164,39 @@ module Stmt =
        Takes an environment, a configuration, a continuation and a statement, and returns another configuration. The 
        environment is the same as for expressions
     *)
-    let rec eval env ((st, i, o, r) as conf) k stmt = match stmt with
-      | Read    x          -> (match i with z::i' -> (State.update x z st, i', o) | _ -> failwith "Unexpected end of input")
-      | Write   e          -> (st, i, o @ [Expr.eval st e])
-      | Assign (x, e)      -> (State.update x (Expr.eval st e) st, i, o)
-      | Seq    (s1, s2)    -> eval env (eval env conf s1) s2
-      | Skip               -> conf
-      | If     (e, s1, s2) -> if Expr.eval st e != 0 then eval env conf s1 else eval env conf s2
-      | While  (e, s)      -> if Expr.eval st e != 0 then eval env (eval env conf s) stmt else conf
-      | Repeat (s, e)      -> let (st_, i_, o_) as conf_ = eval env conf s in 
-                                if Expr.eval st_ e == 0 then eval env conf_ stmt else conf_
-      | Call   (f, params) -> let eval_params = List.map (Expr.eval st) params in
-                              let (params, locals, body) = env#definition f in
-                              let sub_state = State.enter st (params @ locals) in
-                              let updater = (fun state param value -> State.update param value state) in
-                              let ready_sub_state = List.fold_left2 updater sub_state params eval_params in 
-                              let (new_state, new_i, new_o) = eval env (ready_sub_state, i, o) body in
-                              (State.leave new_state st, new_i, new_o) 
+    let rec eval env ((st, i, o, r) as conf) k stmt =
+      let (<*>) a b = match a, b with
+          | Skip, s -> s
+          | s, Skip -> s
+          | s1, s2  -> Seq (s1, s2)
+      in
+      let not e = Expr.Binop ("==", e, Expr.Const 0) in
+      match stmt with
+(* SkipSkip *)      | Skip               -> if k = Skip then (st, i, o, None)
+(* Skip *)                                  else eval env conf Skip k
+(* Assign *)        | Assign (x, e)      -> let v, (st, i, o, _) = Expr.eval env conf e in 
+                                            let conf = (State.update x v st, i, o, None) in
+                                            eval env conf Skip k
+(* Write *)         | Write   e          -> let v, (st, i, o, _) = Expr.eval env conf e in 
+                                            let conf = (st, i, o @ [v], None) in
+                                            eval env conf Skip k
+(* Read *)          | Read    x          -> let conf = (match i with z::i' -> (State.update x z st, i', o, None) | _ -> failwith "Unexpected end of input") in
+                                            eval env conf Skip k
+(* Seq *)           | Seq    (s1, s2)    -> eval env conf (s2 <*> k) s1
+                    | If     (e, s1, s2) -> let v, conf = Expr.eval env conf e in
+(* IfTrue *)                                if v != 0 then eval env conf k s1 
+(* IfFalse *)                               else eval env conf k s2
+                    | While  (e, s)      -> let v, conf = Expr.eval env conf e in 
+(* WhileTrue *)                             if v != 0 then eval env conf (stmt <*> k) s
+(* WhileFalse *)                            else eval env conf Skip k
+                    | Repeat (s, e)      -> eval env conf (While (not e, s) <*> k) s 
+(* Call *)          | Call   (f, params) -> let step (conf, list) e = (let v, conf = Expr.eval env conf e in conf, list @ [v]) in 
+                                            let conf, eval_params = List.fold_left step (conf, []) params in 
+                                            let conf = env#definition env f eval_params conf in
+                                            eval env conf Skip k
+                    | Return r           -> match r with
+(* ReturnEmpty *)                             | None   -> (st, i, o, None)
+(* Return *)                                  | Some e -> let v, (st, i, o, _) = Expr.eval env conf e in (st, i, o, Some v)
 
     (* Statement parser *)
     ostap (
@@ -190,6 +210,7 @@ module Stmt =
       | %"while" e:!(Expr.parse) %"do" t:parse %"od" {While (e, t)}
       | %"for" t1:parse "," e:!(Expr.parse) "," t2:parse %"do" t3:parse %"od" {Seq (t1, While (e, Seq (t3, t2)))}
       | %"repeat" t:parse %"until" e:!(Expr.parse) {Repeat (t, e)}
+      | %"return"  e:(!(Expr.parse))? {Return e}
       | %"if" e:!(Expr.parse) %"then" t:parse 
         elifs:(%"elif" !(Expr.parse) %"then" parse)* 
         elseb:(%"else" parse)? %"fi"
@@ -202,7 +223,7 @@ module Stmt =
           If (e, t, newElseBody)
         }
       | x:IDENT ":=" e:!(Expr.parse)    {Assign (x, e)}
-      | name:IDENT "(" params:(!(Util.list)[ostap (!(Expr.parse))])? ")" {Call (name, default [] params)}            
+      | name:IDENT "(" params:(!(Util.list)[ostap (!(Expr.parse))])? ")" {Call (name, default [] params)}
     )
       
   end

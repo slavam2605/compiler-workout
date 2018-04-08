@@ -41,7 +41,7 @@ let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
 	      				        | "z"  -> (==) 0
 	      					    | "nz" -> (!=) 0
 	      				     in
-	      				     if predicate x then eval env conf (env#labeled s) else eval env conf prg'
+	      				     if predicate x then eval env (cstack, stack', c) (env#labeled s) else eval env (cstack, stack', c) prg'
             | CALL f      -> eval env ((prg', st)::cstack, stack, c) (env#labeled f)
             | END         -> let (p, st')::cstack' = cstack in 
                              eval env (cstack', stack, (State.leave st st', i, o)) p
@@ -58,7 +58,7 @@ let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
 		                        let (st', stack') = List.fold_right (
 		                            fun p (st, x::stack') -> (State.update p x st, stack')  
                                 ) p (enter_st, stack) in
-		                        (cstack, stack, (st', i, o))
+		                        (cstack, stack', (st', i, o))
 		     ) prg'
 
 (* Top-level evaluation
@@ -97,6 +97,7 @@ let rec compile' env p =
   | Expr.Var   x          -> [LD x]
   | Expr.Const n          -> [CONST n]
   | Expr.Binop (op, x, y) -> expr x @ expr y @ [BINOP op]
+  | Expr.Call (f, params) -> List.concat (List.map expr params) @ [CALL f]
   in
   match p with
   | Stmt.Seq (s1, s2)   -> compile' env s1 @ compile' env s2
@@ -116,6 +117,7 @@ let rec compile' env p =
   | Stmt.Repeat (s, e)  -> let startLabel = env#next_label in
   						   [LABEL startLabel] @ compile' env s @ expr e @ [CJMP ("z", startLabel)]
   | Stmt.Call (f, p)    -> List.concat (List.map expr p) @ [CALL f]
+  | Stmt.Return r       -> (match r with | None -> [] | Some v -> expr v) @ [END]
 
 let compile_procedure env (name, (params, locals, body)) =
     [LABEL name; BEGIN (params, locals)] @ compile' env body @ [END] 
