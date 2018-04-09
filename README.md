@@ -14,8 +14,14 @@ Building:
 * To test: `test.sh` from `regression` subfolder
 
 ### Data flow analysis
-Implemented a simple example of a constant propagation data flow analysis
-using forward monotone framework.
+Implemented a monotone framework for forward and backward data flow analysis.
+Using this framework implemented constant propagation _forward_ analysis and
+live variables _backward_ analysis. To demonstrate the results some optimization
+transformations were implemented:
+* Constant propagation & folding 
+* Elimination of unused structures (like `if 1 then ...` or `while 0 do ...`)
+* Elimination of unused assignments
+
 To run an example: `./rc.opt -a [filename]`
 
 Example:
@@ -42,6 +48,7 @@ Run `./rc.opt -a example.expr`
 
 Result:
 ```
+Propagate constants:
 AAssign [] -> [w = 640]
 AAssign [w = 640] -> [h = 480, w = 640]
 AAssign [h = 480, w = 640] -> [size = 307200, h = 480, w = 640]
@@ -58,9 +65,24 @@ AWrite [a = None, size = None, h = 480, w = 640, a = 1, size = 307200, a = 2] ->
 AWrite [a = None, size = None, h = 480, w = 640, a = 1, size = 307200, a = 2] -> [a = None, size = None, h = 480, w = 640, a = 1, size = 307200, a = 2]
 AWrite [a = None, size = None, h = 480, w = 640, a = 1, size = 307200, a = 2] -> [a = None, size = None, h = 480, w = 640, a = 1, size = 307200, a = 2]
 
+Live variables:
+AAssign [] -> [w]
+AAssign [w] -> [w, h]
+AAssign [w, h] -> [size, w, h]
+// if
+AAssign [size, w, h] -> [a, size, w, h]
+// else
+AAssign [size, w, h] -> [a, size, w, h]
+// if-end [size, w, h] -> [a, size, w, h]
+// while
+AAssign [size, a, w, h] -> [a, w, h, size]
+AAssign [a, w, h, size] -> [w, h, size, a]
+// while-end [a, size, w, h] -> [w, h, size, a]
+AWrite [w, h, size] -> [h, size]
+AWrite [h, size] -> [size]
+AWrite [size] -> []
+
 Result:
-w := 640;
-h := 480;
 size := 307200;
 a := 2;
 while a > 0 do
