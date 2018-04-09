@@ -65,24 +65,25 @@ module MonotoneFramework =
         | ASeq    (s1, s2, (_, a))    -> let (exit1, as1, change1) = forward_analyse' s1 input combine transfer change in
                                          let (exit2, as2, change2) = forward_analyse' s2 exit1 combine transfer change in
                                          (exit2, ASeq (as1, as2, (input, exit2)), change1 || change2 || change a exit2)
-        | AIf     (e, s1, s2, (_, a)) -> let (exit1, as1, change1) = forward_analyse' s1 input combine transfer change in
-                                         let (exit2, as2, change2) = forward_analyse' s2 input combine transfer change in
+        | AIf     (e, s1, s2, (_, a)) -> let (exit1, as1, change1) = forward_analyse' s1 exit_analysis combine transfer change in
+                                         let (exit2, as2, change2) = forward_analyse' s2 exit_analysis combine transfer change in
                                          let exit = combine exit1 exit2 in
                                          (exit, AIf (e, as1, as2, (input, exit)), change1 || change2 || change a exit)
         | AWhile  (e, s, (_, a))      -> let global_change = ref true in
                                          let annotated_body = ref s in
                                          let current_input = ref input in
                                          let ever_change = ref false in
-                                         let last_exit = ref input in
+                                         let last_exit = ref exit_analysis in
                                          while !global_change do
-                                             let (exit, new_body, changed) = forward_analyse' !annotated_body !current_input combine transfer change in
+                                             let inner_input = transfer aprg !current_input in
+                                             let (exit, new_body, changed) = forward_analyse' !annotated_body inner_input combine transfer change in
                                              current_input := combine input exit;
                                              annotated_body := new_body;
                                              global_change := changed;
                                              if changed then ever_change := true;
                                              last_exit := exit
                                          done;
-                                         let exit = combine !last_exit input in
+                                         let exit = combine !last_exit exit_analysis in
                                          (exit, AWhile (e, !annotated_body, (!current_input, exit)), !ever_change)
         | ARepeat (s, e, (_, a))      -> failwith "Not supported: Repeat"
 
@@ -103,7 +104,8 @@ module MonotoneFramework =
         | AIf (e, s1, s2, (a, _))   -> let (input1, as1, change1) = backward_analyse' s1 output combine transfer change in
                                        let (input2, as2, change2) = backward_analyse' s2 output combine transfer change in
                                        let input = combine input1 input2 in
-                                       (input, AIf (e, as1, as2, (input, output)), change1 || change2 || change a input)
+                                       let input_if = transfer aprg input in
+                                       (input_if, AIf (e, as1, as2, (input_if, output)), change1 || change2 || change a input_if)
         | AWhile (e, s, (a, _))     -> let global_change = ref true in
                                        let annotated_body = ref s in
                                        let current_output = ref output in
@@ -118,7 +120,8 @@ module MonotoneFramework =
                                            last_input := input
                                        done;
                                        let input = combine !last_input output in
-                                       (input, AWhile (e, !annotated_body, (input, !current_output)), !ever_change)
+                                       let input_while = transfer aprg input in
+                                       (input_while, AWhile (e, !annotated_body, (input_while, !current_output)), !ever_change || change a input_while)
         | ARepeat (s, e, (a, _))    -> failwith "Not supported: Repeat"
 
     let backward_analyse (prg : Stmt.t) (framework : 'a monotone_framework) : 'a t =
