@@ -25,6 +25,18 @@ module MonotoneFramework =
         | Stmt.While  (e, s)      -> AWhile (e, annotate s init, (init, init))
         | Stmt.Repeat (s, e)      -> ARepeat (annotate s init, e, (init, init))
         | Stmt.Call   (f, params) -> ACall (f, params, (init, init))
+
+    let rec transform (aprg : 'a t) (transformer : 'a t -> Stmt.t option) : Stmt.t =
+        match transformer aprg with | Some r -> r | None -> match aprg with
+            | ARead   (x, _)         -> Stmt.Read x
+            | AWrite  (e, _)         -> Stmt.Write e
+            | AAssign (x, e, _)      -> Stmt.Assign (x, e)
+            | ASeq    (s1, s2, _)    -> Stmt.Seq (transform s1 transformer, transform s2 transformer)
+            | ASkip   _              -> Stmt.Skip
+            | AIf     (e, s1, s2, _) -> Stmt.If (e, transform s1 transformer, transform s2 transformer)
+            | AWhile  (e, s, _)      -> Stmt.While (e, transform s transformer)
+            | ARepeat (s, e, _)      -> Stmt.Repeat (transform s transformer, e)
+            | ACall   (f, params, _) -> Stmt.Call (f, params)
     
     let rec print_result elem_printer = function
         | ARead   (_, (a1, a2))       -> print_string @@ "ARead "   ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
@@ -280,6 +292,15 @@ module LiveVariables =
             change = change
         }
 
+     let eliminate_dead_variables (prg : Stmt.t) : Stmt.t =
+         let module M = MonotoneFramework in
+         let analyse_result = live_variables prg in
+         let transformer = function
+             | M.AAssign (x, e, (_, output)) -> Some (if List.mem x output then Stmt.Assign (x, e) else Skip)
+             | _ -> None
+         in
+         M.transform analyse_result transformer
+
   end
 
 module Optimizations =
@@ -289,7 +310,11 @@ module Optimizations =
         let change = ref true in
         let old_prg = ref prg in
         while !change do
-            let new_prg = EliminateUselessStatements.eliminate_useless_statements @@ ConstantPropagation.propagate_constants !old_prg in
+            let new_prg =
+                LiveVariables.eliminate_dead_variables @@
+                EliminateUselessStatements.eliminate_useless_statements @@
+                ConstantPropagation.propagate_constants !old_prg
+            in
             change := new_prg <> !old_prg;
             old_prg := new_prg
         done;
