@@ -87,7 +87,42 @@ module MonotoneFramework =
         | ARepeat (s, e, (_, a))      -> failwith "Not supported: Repeat"
 
     let forward_analyse (prg : Stmt.t) (framework : 'a monotone_framework) : 'a t =
-            let (_, tree, _) = forward_analyse' (annotate prg framework.zero) framework.init framework.combine framework.transfer framework.change in tree
+        let (_, tree, _) = forward_analyse' (annotate prg framework.zero) framework.init framework.combine framework.transfer framework.change in tree
+
+    let rec backward_analyse' (aprg: 'a t) (output : 'a) (combine : 'a -> 'a -> 'a) (transfer : 'a t -> 'a -> 'a) (change : 'a -> 'a -> bool) : 'a * 'a t * bool =
+        let input_analysis = transfer aprg output in
+        match aprg with
+        | ARead (x, (a, _))         -> (input_analysis, ARead (x, (input_analysis, output)), change a input_analysis)
+        | AWrite (e, (a, _))        -> (input_analysis, AWrite (e, (input_analysis, output)), change a input_analysis)
+        | AAssign (x, e, (a, _))    -> (input_analysis, AAssign (x, e, (input_analysis, output)), change a input_analysis)
+        | ASkip (a, _)              -> (input_analysis, ASkip (input_analysis, output), change a input_analysis)
+        | ACall (f, params, (a, _)) -> (input_analysis, ACall (f, params, (input_analysis, output)), change a input_analysis)
+        | ASeq (s1, s2, (a, _))     -> let (input2, as2, change2) = backward_analyse' s2 output combine transfer change in
+                                       let (input1, as1, change1) = backward_analyse' s1 input2 combine transfer change in
+                                       (input1, ASeq (as1, as2, (input1, output)), change1 || change2 || change a input2)
+        | AIf (e, s1, s2, (a, _))   -> let (input1, as1, change1) = backward_analyse' s1 output combine transfer change in
+                                       let (input2, as2, change2) = backward_analyse' s2 output combine transfer change in
+                                       let input = combine input1 input2 in
+                                       (input, AIf (e, as1, as2, (input, output)), change1 || change2 || change a input)
+        | AWhile (e, s, (a, _))     -> let global_change = ref true in
+                                       let annotated_body = ref s in
+                                       let current_output = ref output in
+                                       let ever_change = ref false in
+                                       let last_input = ref output in
+                                       while !global_change do
+                                           let (input, new_body, changed) = backward_analyse' !annotated_body !current_output combine transfer change in
+                                           current_output := combine output input;
+                                           annotated_body := new_body;
+                                           global_change := changed;
+                                           if changed then ever_change := true;
+                                           last_input := input
+                                       done;
+                                       let input = combine !last_input output in
+                                       (input, AWhile (e, !annotated_body, (input, !current_output)), !ever_change)
+        | ARepeat (s, e, (a, _))    -> failwith "Not supported: Repeat"
+
+    let backward_analyse (prg : Stmt.t) (framework : 'a monotone_framework) : 'a t =
+        let (_, tree, _) = backward_analyse' (annotate prg framework.zero) framework.init framework.combine framework.transfer framework.change in tree
 
   end
   
