@@ -34,7 +34,11 @@ let main =
       if analyse then
         let (_, s) = prog in
         let analyse_tree = ConstantPropagation.constant_propagation s in
+        print_string "Propagate constants:\n";
         MonotoneFramework.print_result (fun x -> "[" ^ (String.concat ", " (List.map string_of_pair x)) ^ "]") analyse_tree;
+        let analyse_tree = LiveVariables.live_variables s in
+        print_string "\nLive variables:\n";
+        MonotoneFramework.print_result (fun x -> "[" ^ (String.concat ", " x) ^ "]") analyse_tree;
         print_string "\nResult:\n";
         let result = Optimizations.optimize s in
         print_string @@ Stmt.pretty_print result

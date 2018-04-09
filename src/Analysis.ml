@@ -131,7 +131,6 @@ module MonotoneFramework =
   
 module ConstantPropagation =
   struct
-    module M = MonotoneFramework
   
     let rec const_value (list (*: [string * int option]*)) (e : Expr.t) : int option = match e with
         | Expr.Const z            -> Some z
@@ -158,6 +157,7 @@ module ConstantPropagation =
     let (@@@) (list1 : 'a list) (list2 : 'a list) : 'a list = unique @@ list1 @ list2
 
     let constant_propagation (prg : Stmt.t) =
+        let module M = MonotoneFramework in
         let kill s list = match s with
             | M.AAssign (x, _, _) -> List.filter (fun (y, _) -> x <> y) list
             | _ -> list
@@ -181,6 +181,7 @@ module ConstantPropagation =
             | None   -> e
 
     let propagate_constants (prg : Stmt.t) : Stmt.t =
+        let module M = MonotoneFramework in
         let analyse_result = constant_propagation prg in
         let rec transform = function
             | M.ARead   (x, (input, _))         -> Stmt.Read x
@@ -237,7 +238,50 @@ module EliminateUselessStatements =
         let (_, result) = eliminate_useless_statements' prg in result
         
   end
-  
+
+module LiveVariables =
+  struct
+
+    let rec unique = function
+        | []      -> []
+        | x::rest -> x :: unique (List.filter (fun y -> x <> y) rest)
+
+    let (@@@) (list1 : 'a list) (list2 : 'a list) : 'a list = unique @@ list1 @ list2
+
+    let rec used_variables' = function
+        | Expr.Const _         -> []
+        | Expr.Var x           -> [x]
+        | Expr.Binop (_, l, r) -> used_variables' l @ used_variables' r
+
+    let used_variables (e : Expr.t) = unique @@ used_variables' e
+
+    let live_variables (prg : Stmt.t) =
+        let module M = MonotoneFramework in
+        let kill s list = match s with
+            | M.AAssign (x, _, _) -> List.filter ((<>) x) list
+            | _ -> list
+        in
+        let gen s list = match s with
+            | M.AWrite (e, _)     -> used_variables e @@@ list
+            | M.AAssign (_, e, _) -> used_variables e @@@ list
+            | M.AIf (e, _, _, _)  -> used_variables e @@@ list
+            | M.AWhile (e, _, _)  -> used_variables e @@@ list
+            | M.ARepeat (_, e, _) -> used_variables e @@@ list
+            | M.ACall (_, p, _)   -> List.concat (List.map used_variables p) @@@ list
+            | _ -> list
+        in
+        let (<*>) f g = fun a b -> g a (f a b) in
+        let change x y = (List.sort compare x) <> (List.sort compare y) in
+        MonotoneFramework.backward_analyse prg {
+            init = [];
+            zero = [];
+            combine = (@@@);
+            transfer = kill <*> gen;
+            change = change
+        }
+
+  end
+
 module Optimizations =
   struct
   
