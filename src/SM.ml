@@ -117,7 +117,7 @@ let rec compile' env p =
   | Stmt.Repeat (s, e)  -> let startLabel = env#next_label in
   						   [LABEL startLabel] @ compile' env s @ expr e @ [CJMP ("z", startLabel)]
   | Stmt.Call (f, p)    -> List.concat (List.map expr p) @ [CALL (f, List.length p, true)]
-  | Stmt.Return r       -> (match r with | None -> [] | Some v -> expr v) @ [END]
+  | Stmt.Return r       -> (match r with | None -> [RET false] | Some v -> expr v @ [RET true])
 
 let compile_procedure env (name, (params, locals, body)) =
     [LABEL name; BEGIN (name, params, locals)] @ compile' env body @ [END] 
@@ -130,5 +130,4 @@ let compile_procedure env (name, (params, locals, body)) =
    stack machine
 *)
 let compile (defs, p) = let env = new env in
-    let end_label = env#next_label in
-    [JMP end_label] @ List.concat (List.map (compile_procedure env) defs) @ [LABEL end_label] @ compile' env p
+    compile' env p @ [END] @ List.concat (List.map (compile_procedure env) defs)

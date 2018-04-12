@@ -75,10 +75,10 @@ let show instr =
   | Pop    s           -> Printf.sprintf "\tpopl\t%s"      (opnd s)
   | Ret                -> "\tret"
   | Call   p           -> Printf.sprintf "\tcall\t%s" p
-  | Label  l           -> Printf.sprintf "%s:\n" l
+  | Label  l           -> Printf.sprintf "%s:" l
   | Jmp    l           -> Printf.sprintf "\tjmp\t%s" l
   | CJmp  (s , l)      -> Printf.sprintf "\tj%s\t%s" s l
-  | Meta   s           -> Printf.sprintf "%s\n" s
+  | Meta   s           -> Printf.sprintf "%s" s
 
 (* Opening stack machine to use instructions without fully qualified names *)
 open SM
@@ -111,7 +111,7 @@ let rec compile env code =
     | LABEL s -> env, [Label s]
     | JMP l -> env, [Jmp l]
     | CJMP (f, l) -> let s, env = env#pop in env, [Binop ("cmp", L 0, s); CJmp (f, l)]
-    | BINOP op -> let sx, sy, env = env#pop2 in 
+    | BINOP op -> (let sx, sy, env = env#pop2 in
                   let s, env = env#allocate in env, match op with
       | "+" | "-" | "*" -> binop (op, sx, sy) @ mov (sy, s)
       | "&&" | "!!" -> [Binop ("^", eax, eax); Binop ("^", edx, edx);
@@ -127,7 +127,22 @@ let rec compile env code =
         | "!=" -> "ne"
         in binop ("cmp", sx, sy) @ [Mov (L 0, eax); Set (suf, "%al"); Mov (eax, s)]
       | "/" -> [Mov (sy, eax); Cltd; IDiv sx; Mov (eax, s)]
-      | "%" -> [Mov (sy, eax); Cltd; IDiv sx; Mov (edx, s)]
+      | "%" -> [Mov (sy, eax); Cltd; IDiv sx; Mov (edx, s)])
+    | BEGIN (f, params, locals) ->
+        let env = env#enter f params locals in
+        env, [Push ebp; Mov (esp, ebp); Binop ("-", M ("$" ^ env#lsize), esp)]
+    | END -> env, [Label env#epilogue; Mov (ebp, esp); Pop ebp; Ret; Meta (Printf.sprintf "\t.set %s, %d" env#lsize env#allocated)]
+    | CALL (f, param_count, is_proc) ->
+        let push_symbolic = List.map (fun x -> Push x) env#live_registers in
+        let pop_symbolic = List.map (fun x -> Pop x) @@ List.rev env#live_registers in
+        let env, params = List.fold_left (fun (env, list) _ -> let s, env = env#pop in env, s::list) (env, []) (List.init param_count (fun _ -> ())) in
+        let push_params = List.map (fun x -> Push x) params in
+        let env, get_result = if is_proc then env, [] else (let s, env = env#allocate in env, [Mov (eax, s)]) in
+        env, push_symbolic @ push_params @ [Call f; Binop ("-", L (param_count * word_size), esp)] @ pop_symbolic @ get_result
+    | RET with_res -> if with_res then
+            let s, env = env#pop in env, [Mov (s, eax); Jmp env#epilogue]
+        else
+            env, [Jmp env#epilogue]
   in match code with
     | sm_ins::rest -> 
       let new_env, ins = step env sm_ins in
