@@ -131,14 +131,15 @@ let rec compile env code =
     | BEGIN (f, params, locals) ->
         let env = env#enter f params locals in
         env, [Push ebp; Mov (esp, ebp); Binop ("-", M ("$" ^ env#lsize), esp)]
-    | END -> env, [Label env#epilogue; Mov (ebp, esp); Pop ebp; Ret; Meta (Printf.sprintf "\t.set %s, %d" env#lsize env#allocated)]
+    | END -> env, [Label env#epilogue; Mov (ebp, esp); Pop ebp; Ret; Meta (Printf.sprintf "\t.set %s, %d" env#lsize (env#allocated * word_size))]
     | CALL (f, param_count, is_proc) ->
         let push_symbolic = List.map (fun x -> Push x) env#live_registers in
         let pop_symbolic = List.map (fun x -> Pop x) @@ List.rev env#live_registers in
-        let env, params = List.fold_left (fun (env, list) _ -> let s, env = env#pop in env, s::list) (env, []) (List.init param_count (fun _ -> ())) in
+        let env, rev_params = List.fold_left (fun (env, list) _ -> let s, env = env#pop in env, s::list) (env, []) (List.init param_count (fun _ -> ())) in
+        let params = List.rev rev_params in
         let push_params = List.map (fun x -> Push x) params in
         let env, get_result = if is_proc then env, [] else (let s, env = env#allocate in env, [Mov (eax, s)]) in
-        env, push_symbolic @ push_params @ [Call f; Binop ("-", L (param_count * word_size), esp)] @ pop_symbolic @ get_result
+        env, push_symbolic @ push_params @ [Call f; Binop ("+", L (param_count * word_size), esp)] @ pop_symbolic @ get_result
     | RET with_res -> if with_res then
             let s, env = env#pop in env, [Mov (s, eax); Jmp env#epilogue]
         else
