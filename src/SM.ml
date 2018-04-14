@@ -44,8 +44,9 @@ let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
 	      				        in
 	      				        if predicate x then eval env (cstack, stack', c) (env#labeled s) else eval env (cstack, stack', c) prg'
             | CALL (f, _, _) -> eval env ((prg', st)::cstack, stack, c) (env#labeled f)
-            | END            -> let (p, st')::cstack' = cstack in 
-                                eval env (cstack', stack, (State.leave st st', i, o)) p
+            | END | RET _    -> (match cstack with
+                                    | (p, st')::cstack' -> eval env (cstack', stack, (State.leave st st', i, o)) p
+                                    | [] -> conf)
 	      	| _ -> eval env
 		     (match insn with
 		      | BINOP op        -> let y::x::stack' = stack in (cstack, Expr.to_func op x y :: stack', c)
