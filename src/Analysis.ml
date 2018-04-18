@@ -59,14 +59,15 @@ module MonotoneFramework =
         | ACall   (_, _, (a1, a2))    -> print_string @@ "ACall "   ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
 
     type 'a monotone_framework = {
-        init : 'a;                    (* Initial analysis for entry (or exit) point *)
-        zero : 'a;                    (* Identity with respect to `combine`: forall a. combine a zero = combine zero a = a *)
-        combine : 'a -> 'a -> 'a;     (* Combine function (usually set union or intersection) *)
-        transfer : 'a t -> 'a -> 'a;  (* Transfer function (usually `transfer prg a = gen prg (kill prg a)` *)
-        change : 'a -> 'a -> bool     (* Inequality predicate, `change a b == true` means that `a is not equal to b` *)
+        init : 'a;                                (* Initial analysis for entry (or exit) point *)
+        zero : 'a;                                (* Identity with respect to `combine`: forall a. combine a zero = combine zero a = a *)
+        combine : 'a -> 'a -> 'a;                 (* Combine function (usually set union or intersection) *)
+        transfer : 'a t -> 'a -> 'a;              (* Transfer function (usually `transfer prg a = gen prg (kill prg a)` *)
+        cond_transfer : Expr.t -> 'a -> 'a * 'a;  (* Transfer function for conditions, returns (if_true, if_false) results *)
+        change : 'a -> 'a -> bool                 (* Inequality predicate, `change a b == true` means that `a is not equal to b` *)
     }
 
-    let rec forward_analyse' (aprg : 'a t) (input : 'a) (combine : 'a -> 'a -> 'a) (transfer : 'a t -> 'a -> 'a) (change : 'a -> 'a -> bool) : 'a * 'a t * bool =
+    let rec forward_analyse' (aprg : 'a t) (input : 'a) (combine : 'a -> 'a -> 'a) (transfer : 'a t -> 'a -> 'a) (cond_transfer : Expr.t -> 'a -> 'a * 'a) (change : 'a -> 'a -> bool) : 'a * 'a t * bool =
         let exit_analysis = transfer aprg input in
         match aprg with
         | ARead   (x, (_, a))         -> (exit_analysis, ARead (x, (input, exit_analysis)), change a exit_analysis)
@@ -74,33 +75,37 @@ module MonotoneFramework =
         | AAssign (x, e, (_, a))      -> (exit_analysis, AAssign (x, e, (input, exit_analysis)), change a exit_analysis)
         | ASkip (_, a)                -> (exit_analysis, ASkip (input, exit_analysis), change a exit_analysis)
         | ACall   (f, params, (_, a)) -> (exit_analysis, ACall (f, params, (input, exit_analysis)), change a exit_analysis)
-        | ASeq    (s1, s2, (_, a))    -> let (exit1, as1, change1) = forward_analyse' s1 input combine transfer change in
-                                         let (exit2, as2, change2) = forward_analyse' s2 exit1 combine transfer change in
+        | ASeq    (s1, s2, (_, a))    -> let (exit1, as1, change1) = forward_analyse' s1 input combine transfer cond_transfer change in
+                                         let (exit2, as2, change2) = forward_analyse' s2 exit1 combine transfer cond_transfer change in
                                          (exit2, ASeq (as1, as2, (input, exit2)), change1 || change2 || change a exit2)
-        | AIf     (e, s1, s2, (_, a)) -> let (exit1, as1, change1) = forward_analyse' s1 exit_analysis combine transfer change in
-                                         let (exit2, as2, change2) = forward_analyse' s2 exit_analysis combine transfer change in
+        | AIf     (e, s1, s2, (_, a)) -> let (true_input, false_input) = cond_transfer e input in
+                                         let (exit1, as1, change1) = forward_analyse' s1 true_input combine transfer cond_transfer change in
+                                         let (exit2, as2, change2) = forward_analyse' s2 false_input combine transfer cond_transfer change in
                                          let exit = combine exit1 exit2 in
                                          (exit, AIf (e, as1, as2, (input, exit)), change1 || change2 || change a exit)
-        | AWhile  (e, s, (_, a))      -> let global_change = ref true in
-                                         let annotated_body = ref s in
-                                         let current_input = ref input in
+        | AWhile  (e, s, (_, a))      -> let (true_input, false_input) = cond_transfer e input in 
+                                         let global_change = ref true in
                                          let ever_change = ref false in
-                                         let last_exit = ref exit_analysis in
+                                         let current_body = ref s in
+                                         let current_input = ref input in
+                                         let current_cond_true = ref true_input in
+                                         let current_cond_false = ref false_input in
                                          while !global_change do
-                                             let inner_input = transfer aprg !current_input in
-                                             let (exit, new_body, changed) = forward_analyse' !annotated_body inner_input combine transfer change in
-                                             current_input := combine input exit;
-                                             annotated_body := new_body;
+                                             let (body_exit, new_body, changed) = forward_analyse' !current_body !current_cond_true combine transfer cond_transfer change in
+                                             current_body := new_body;
+                                             current_input := combine !current_input body_exit;
+                                             let (new_cond_true, new_cond_false) = cond_transfer e !current_input in
+                                             let changed = changed || change !current_cond_true new_cond_true || change !current_cond_false new_cond_false in
+                                             current_cond_true := new_cond_true;
+                                             current_cond_false := new_cond_false;
                                              global_change := changed;
-                                             if changed then ever_change := true;
-                                             last_exit := exit
+                                             if changed then ever_change := true
                                          done;
-                                         let exit = combine !last_exit exit_analysis in
-                                         (exit, AWhile (e, !annotated_body, (!current_input, exit)), !ever_change)
+                                         (!current_cond_false, AWhile (e, !current_body, (input, !current_cond_false)), !ever_change)
         | ARepeat (s, e, (_, a))      -> failwith "Not supported: Repeat"
 
     let forward_analyse (prg : Stmt.t) (framework : 'a monotone_framework) : 'a t =
-        let (_, tree, _) = forward_analyse' (annotate prg framework.zero) framework.init framework.combine framework.transfer framework.change in tree
+        let (_, tree, _) = forward_analyse' (annotate prg framework.zero) framework.init framework.combine framework.transfer framework.cond_transfer framework.change in tree
 
     let rec backward_analyse' (aprg: 'a t) (output : 'a) (combine : 'a -> 'a -> 'a) (transfer : 'a t -> 'a -> 'a) (change : 'a -> 'a -> bool) : 'a * 'a t * bool =
         let input_analysis = transfer aprg output in
@@ -184,6 +189,7 @@ module ConstantPropagation =
             zero = [];
             combine = (@@@);
             transfer = kill <*> gen;
+            cond_transfer = (fun _ x -> x, x);
             change = (<>)
         }
 
@@ -289,6 +295,7 @@ module LiveVariables =
             zero = [];
             combine = (@@@);
             transfer = kill <*> gen;
+            cond_transfer = (fun _ x -> x, x);
             change = change
         }
 
