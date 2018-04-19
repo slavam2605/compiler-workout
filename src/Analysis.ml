@@ -310,6 +310,58 @@ module LiveVariables =
 
   end
 
+module TrueExpressions =
+  struct
+  
+    let (&&&) list1 list2 = List.filter (fun x -> List.mem x list2) list1
+        
+    let rec unique = function
+        | []      -> []
+        | x::rest -> x :: unique (List.filter (fun y -> x <> y) rest) 
+        
+    let (@@@) list1 list2 = unique @@ list1 @ list2
+    
+    let rec use_var x = function
+        | Expr.Const _ -> false
+        | Expr.Var y -> x = y
+        | Expr.Binop (_, l, r) -> use_var x l || use_var x r
+    
+    let rec negate = function
+        | Expr.Const 0 -> Expr.Const 1
+        | Expr.Const _ -> Expr.Const 0
+        | Expr.Var z -> Expr.Binop ("==", Expr.Var z, Expr.Const 0)
+        | Expr.Binop (op, l, r) -> match op with
+            | "+" | "-" | "*" | "/" | "%" -> Expr.Binop ("==", Expr.Binop (op, l, r), Expr.Const 0)
+            | "<"  -> Expr.Binop (">=", l, r)
+            | ">"  -> Expr.Binop ("<=", l, r)
+            | "<=" -> Expr.Binop (">", l, r)
+            | ">=" -> Expr.Binop ("<", l, r)
+            | "==" -> Expr.Binop ("!=", l, r)
+            | "!=" -> Expr.Binop ("==", l, r)
+            | "&&" -> Expr.Binop ("!!", negate l, negate r)
+            | "!!" -> Expr.Binop ("&&", negate l, negate r)
+    
+    let true_expressions (prg : Stmt.t) =
+        let module M = MonotoneFramework in
+        let (<*>) f g = fun a b -> g a (f a b) in
+        let change x y = (List.sort compare x) <> (List.sort compare y) in
+        let gen _ list = list in
+        let kill s list = match s with 
+            | M.AAssign (x, _, _) -> List.filter (fun e -> not @@ use_var x e) list 
+            | _ -> list
+        in
+        let cond_transfer e list = (list @@@ [e], list @@@ [negate e]) in
+        MonotoneFramework.forward_analyse prg {
+            init = [];
+            zero = [];
+            combine = (&&&);
+            transfer = kill <*> gen;
+            cond_transfer = cond_transfer;
+            change = change
+        } 
+  
+  end
+
 module Optimizations =
   struct
   

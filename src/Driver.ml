@@ -39,6 +39,9 @@ let main =
         let analyse_tree = LiveVariables.live_variables s in
         print_string "\nLive variables:\n";
         MonotoneFramework.print_result (fun x -> "[" ^ (String.concat ", " x) ^ "]") analyse_tree;
+        let analyse_tree = TrueExpressions.true_expressions s in
+        print_string "\nTrue expressions:\n";
+        MonotoneFramework.print_result (fun x -> "[" ^ (String.concat ", " @@ List.map Expr.pretty_print x) ^ "]") analyse_tree;
         print_string "\nResult:\n";
         let result = Optimizations.optimize s in
         print_string @@ Stmt.pretty_print result
