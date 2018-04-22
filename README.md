@@ -60,10 +60,10 @@ AAssign [size = 307200, h = 480, w = 640] -> [a = 2, size = 307200, h = 480, w =
 // while
 AAssign [a = 1, size = 307200, h = 480, w = 640, a = 2, a = None, size = None] -> [size = None, a = 1, h = 480, w = 640, a = 2, a = None]
 AAssign [size = None, a = 1, h = 480, w = 640, a = 2, a = None] -> [a = None, size = None, h = 480, w = 640]
-// while-end [a = 1, size = 307200, h = 480, w = 640, a = 2, a = None, size = None] -> [a = None, size = None, h = 480, w = 640, a = 1, size = 307200, a = 2]
-AWrite [a = None, size = None, h = 480, w = 640, a = 1, size = 307200, a = 2] -> [a = None, size = None, h = 480, w = 640, a = 1, size = 307200, a = 2]
-AWrite [a = None, size = None, h = 480, w = 640, a = 1, size = 307200, a = 2] -> [a = None, size = None, h = 480, w = 640, a = 1, size = 307200, a = 2]
-AWrite [a = None, size = None, h = 480, w = 640, a = 1, size = 307200, a = 2] -> [a = None, size = None, h = 480, w = 640, a = 1, size = 307200, a = 2]
+// while-end [a = 1, size = 307200, h = 480, w = 640, a = 2] -> [a = 1, size = 307200, h = 480, w = 640, a = 2, a = None, size = None]
+AWrite [a = 1, size = 307200, h = 480, w = 640, a = 2, a = None, size = None] -> [a = 1, size = 307200, h = 480, w = 640, a = 2, a = None, size = None]
+AWrite [a = 1, size = 307200, h = 480, w = 640, a = 2, a = None, size = None] -> [a = 1, size = 307200, h = 480, w = 640, a = 2, a = None, size = None]
+AWrite [a = 1, size = 307200, h = 480, w = 640, a = 2, a = None, size = None] -> [a = 1, size = 307200, h = 480, w = 640, a = 2, a = None, size = None]
 
 Live variables:
 AAssign [] -> [w]
@@ -81,6 +81,40 @@ AAssign [a, w, h, size] -> [w, h, size, a]
 AWrite [w, h, size] -> [h, size]
 AWrite [h, size] -> [size]
 AWrite [size] -> []
+
+True expressions:
+AAssign [] -> []
+AAssign [] -> []
+AAssign [] -> []
+// if
+AAssign [size < 1000] -> [size < 1000]
+// else
+AAssign [size >= 1000] -> [size >= 1000]
+// if-end [] -> []
+// while
+AAssign [a > 0] -> [a > 0]
+AAssign [a > 0] -> []
+// while-end [] -> [a <= 0]
+AWrite [a <= 0] -> [a <= 0]
+AWrite [a <= 0] -> [a <= 0]
+AWrite [a <= 0] -> [a <= 0]
+
+Interval analysis:
+AAssign [] -> [(w, [640, 640])]
+AAssign [(w, [640, 640])] -> [(h, [480, 480]), (w, [640, 640])]
+AAssign [(h, [480, 480]), (w, [640, 640])] -> [(size, [307200, 307200]), (h, [480, 480]), (w, [640, 640])]
+// if
+AAssign [(size, [307200, 307200]), (h, [480, 480]), (w, [640, 640])] -> [(a, [1, 1]), (size, [307200, 307200]), (h, [480, 480]), (w, [640, 640])]
+// else
+AAssign [(size, [307200, 307200]), (h, [480, 480]), (w, [640, 640])] -> [(a, [2, 2]), (size, [307200, 307200]), (h, [480, 480]), (w, [640, 640])]
+// if-end [(size, [307200, 307200]), (h, [480, 480]), (w, [640, 640])] -> [(a, [1, 2]), (size, [307200, 307200]), (h, [480, 480]), (w, [640, 640])]
+// while
+AAssign [(a, [1, 2]), (size, [-30720, 307200]), (h, [480, 480]), (w, [640, 640])] -> [(a, [1, 2]), (size, [-30720, 30720]), (h, [480, 480]), (w, [640, 640])]
+AAssign [(a, [1, 2]), (size, [-30720, 30720]), (h, [480, 480]), (w, [640, 640])] -> [(a, [0, 1]), (size, [-30720, 30720]), (h, [480, 480]), (w, [640, 640])]
+// while-end [(a, [1, 2]), (size, [307200, 307200]), (h, [480, 480]), (w, [640, 640])] -> [(a, [0, 0]), (size, [-30720, 307200]), (h, [480, 480]), (w, [640, 640])]
+AWrite [(a, [0, 0]), (size, [-30720, 307200]), (h, [480, 480]), (w, [640, 640])] -> [(a, [0, 0]), (size, [-30720, 307200]), (h, [480, 480]), (w, [640, 640])]
+AWrite [(a, [0, 0]), (size, [-30720, 307200]), (h, [480, 480]), (w, [640, 640])] -> [(a, [0, 0]), (size, [-30720, 307200]), (h, [480, 480]), (w, [640, 640])]
+AWrite [(a, [0, 0]), (size, [-30720, 307200]), (h, [480, 480]), (w, [640, 640])] -> [(a, [0, 0]), (size, [-30720, 307200]), (h, [480, 480]), (w, [640, 640])]
 
 Result:
 size := 307200;
