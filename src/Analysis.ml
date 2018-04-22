@@ -423,6 +423,14 @@ module IntervalAnalysis =
     let normalize (a, b) = 
         if b > max_value || a < min_value then (min_value, max_value) else (a, b)
   
+    let abs_min (a, b) = 
+        if a <= 0 && b >= 0 then 0 else min (abs a) (abs b)
+        
+    let abs_max (a, b) = 
+        max (abs a) (abs b) 
+  
+    let non_zero x = if x == 0 then 1 else x
+  
     let rec estimate_interval state = 
         let sign_mode (a, b) (c, d) = 
             if b <= 0 && d <= 0 then -1 else
@@ -444,11 +452,11 @@ module IntervalAnalysis =
             normalize @@ match op with
                 | "+"  -> (a + c, b + d)
                 | "-"  -> (a - d, b - c)
-                | "*"  -> let min_abs = a * c in
-                          let max_abs = b * d in
+                | "*"  -> let min_abs = abs_min (a, b) * abs_min (c, d) in
+                          let max_abs = abs_max (a, b) * abs_max (c, d) in
                           sign_interval min_abs max_abs (a, b) (c, d)    
-                | "/"  -> let min_abs = a / d in
-                          let max_abs = b / c in
+                | "/"  -> let min_abs = abs_min (a, b) / abs_max (c, d) in
+                          let max_abs = abs_max (a, b) / non_zero (abs_min (c, d)) in
                           sign_interval min_abs max_abs (a, b) (c, d)
                 | "%"  -> failwith "Not supported: %"
                 | "<"  -> if b < c  then (1, 1) else
