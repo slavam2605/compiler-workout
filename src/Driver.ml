@@ -22,6 +22,8 @@ let string_of_pair ((a, b) : string * int option) = match b with
     | Some x -> Printf.sprintf "%s = %d" a x
     | None   -> Printf.sprintf "%s = None" a
 
+let string_of_pair_range ((a, (b, c)) : string * (int * int)) = Printf.sprintf "(%s, [%d, %d])" a b c
+
 let main =
   try
     let interpret  = Sys.argv.(1) = "-i"  in
@@ -42,6 +44,9 @@ let main =
         let analyse_tree = TrueExpressions.true_expressions s in
         print_string "\nTrue expressions:\n";
         MonotoneFramework.print_result (fun x -> "[" ^ (String.concat ", " @@ List.map Expr.pretty_print x) ^ "]") analyse_tree;
+        let analyse_tree = IntervalAnalysis.interval_analysis s in
+        print_string "\nInterval analysis:\n";
+        MonotoneFramework.print_result (fun x -> "[" ^ (String.concat ", " @@ List.map string_of_pair_range x) ^ "]") analyse_tree;
         print_string "\nResult:\n";
         let result = Optimizations.optimize s in
         print_string @@ Stmt.pretty_print result

@@ -62,12 +62,13 @@ module MonotoneFramework =
         init : 'a;                                (* Initial analysis for entry (or exit) point *)
         zero : 'a;                                (* Identity with respect to `combine`: forall a. combine a zero = combine zero a = a *)
         combine : 'a -> 'a -> 'a;                 (* Combine function (usually set union or intersection) *)
+        widening : 'a -> 'a -> 'a;                (* Widening operator: stable overapproximation of `combine` for loops *)
         transfer : 'a t -> 'a -> 'a;              (* Transfer function (usually `transfer prg a = gen prg (kill prg a)` *)
         cond_transfer : Expr.t -> 'a -> 'a * 'a;  (* Transfer function for conditions, returns (if_true, if_false) results *)
         change : 'a -> 'a -> bool                 (* Inequality predicate, `change a b == true` means that `a is not equal to b` *)
     }
 
-    let rec forward_analyse' (aprg : 'a t) (input : 'a) (combine : 'a -> 'a -> 'a) (transfer : 'a t -> 'a -> 'a) (cond_transfer : Expr.t -> 'a -> 'a * 'a) (change : 'a -> 'a -> bool) : 'a * 'a t * bool =
+    let rec forward_analyse' (aprg : 'a t) (input : 'a) (combine : 'a -> 'a -> 'a) (widening : 'a -> 'a -> 'a) (transfer : 'a t -> 'a -> 'a) (cond_transfer : Expr.t -> 'a -> 'a * 'a) (change : 'a -> 'a -> bool) (print_analysis : 'a -> unit) : 'a * 'a t * bool =
         let exit_analysis = transfer aprg input in
         match aprg with
         | ARead   (x, (_, a))         -> (exit_analysis, ARead (x, (input, exit_analysis)), change a exit_analysis)
@@ -75,15 +76,15 @@ module MonotoneFramework =
         | AAssign (x, e, (_, a))      -> (exit_analysis, AAssign (x, e, (input, exit_analysis)), change a exit_analysis)
         | ASkip (_, a)                -> (exit_analysis, ASkip (input, exit_analysis), change a exit_analysis)
         | ACall   (f, params, (_, a)) -> (exit_analysis, ACall (f, params, (input, exit_analysis)), change a exit_analysis)
-        | ASeq    (s1, s2, (_, a))    -> let (exit1, as1, change1) = forward_analyse' s1 input combine transfer cond_transfer change in
-                                         let (exit2, as2, change2) = forward_analyse' s2 exit1 combine transfer cond_transfer change in
+        | ASeq    (s1, s2, (_, a))    -> let (exit1, as1, change1) = forward_analyse' s1 input combine widening transfer cond_transfer change print_analysis in
+                                         let (exit2, as2, change2) = forward_analyse' s2 exit1 combine widening transfer cond_transfer change print_analysis in
                                          (exit2, ASeq (as1, as2, (input, exit2)), change1 || change2 || change a exit2)
         | AIf     (e, s1, s2, (_, a)) -> let (true_input, false_input) = cond_transfer e input in
-                                         let (exit1, as1, change1) = forward_analyse' s1 true_input combine transfer cond_transfer change in
-                                         let (exit2, as2, change2) = forward_analyse' s2 false_input combine transfer cond_transfer change in
+                                         let (exit1, as1, change1) = forward_analyse' s1 true_input combine widening transfer cond_transfer change print_analysis in
+                                         let (exit2, as2, change2) = forward_analyse' s2 false_input combine widening transfer cond_transfer change print_analysis in
                                          let exit = combine exit1 exit2 in
                                          (exit, AIf (e, as1, as2, (input, exit)), change1 || change2 || change a exit)
-        | AWhile  (e, s, (_, a))      -> let (true_input, false_input) = cond_transfer e input in 
+        | AWhile  (e, s, (_, a))      -> let (true_input, false_input) = cond_transfer e input in
                                          let global_change = ref true in
                                          let ever_change = ref false in
                                          let current_body = ref s in
@@ -91,9 +92,9 @@ module MonotoneFramework =
                                          let current_cond_true = ref true_input in
                                          let current_cond_false = ref false_input in
                                          while !global_change do
-                                             let (body_exit, new_body, changed) = forward_analyse' !current_body !current_cond_true combine transfer cond_transfer change in
+                                             let (body_exit, new_body, changed) = forward_analyse' !current_body !current_cond_true combine widening transfer cond_transfer change print_analysis in
                                              current_body := new_body;
-                                             current_input := combine !current_input body_exit;
+                                             current_input := widening !current_input body_exit;
                                              let (new_cond_true, new_cond_false) = cond_transfer e !current_input in
                                              let changed = changed || change !current_cond_true new_cond_true || change !current_cond_false new_cond_false in
                                              current_cond_true := new_cond_true;
@@ -105,7 +106,10 @@ module MonotoneFramework =
         | ARepeat (s, e, (_, a))      -> failwith "Not supported: Repeat"
 
     let forward_analyse (prg : Stmt.t) (framework : 'a monotone_framework) : 'a t =
-        let (_, tree, _) = forward_analyse' (annotate prg framework.zero) framework.init framework.combine framework.transfer framework.cond_transfer framework.change in tree
+        let (_, tree, _) = forward_analyse' (annotate prg framework.zero) framework.init framework.combine framework.widening framework.transfer framework.cond_transfer framework.change (fun _ -> ()) in tree
+        
+    let debug_forward_analyse (prg : Stmt.t) (framework : 'a monotone_framework) (debug_printer : 'a -> unit) : 'a t =
+        let (_, tree, _) = forward_analyse' (annotate prg framework.zero) framework.init framework.combine framework.widening framework.transfer framework.cond_transfer framework.change debug_printer in tree
 
     let rec backward_analyse' (aprg: 'a t) (output : 'a) (combine : 'a -> 'a -> 'a) (transfer : 'a t -> 'a -> 'a) (change : 'a -> 'a -> bool) : 'a * 'a t * bool =
         let input_analysis = transfer aprg output in
@@ -188,6 +192,7 @@ module ConstantPropagation =
             init = [];
             zero = [];
             combine = (@@@);
+            widening = (@@@);
             transfer = kill <*> gen;
             cond_transfer = (fun _ x -> x, x);
             change = (<>)
@@ -219,7 +224,9 @@ module ConstantPropagation =
                                                    Stmt.If (value, ss1, ss2)
             | M.AWhile  (e, s, (input, _))      -> let ss = transform s in
                                                    let value = fold_const input e in
-                                                   Stmt.While (value, ss)
+                                                   (match value with
+                                                     | Expr.Const 0 -> Stmt.While (value, ss)
+                                                     | _ -> Stmt.While (e, ss))
             | M.ARepeat (s, e, (input, _))      -> failwith "Not supported: Repeat"
         in
         transform analyse_result
@@ -294,6 +301,7 @@ module LiveVariables =
             init = [];
             zero = [];
             combine = (@@@);
+            widening = (@@@);
             transfer = kill <*> gen;
             cond_transfer = (fun _ x -> x, x);
             change = change
@@ -355,11 +363,148 @@ module TrueExpressions =
             init = [];
             zero = [];
             combine = (&&&);
+            widening = (&&&);
             transfer = kill <*> gen;
             cond_transfer = cond_transfer;
             change = change
         } 
   
+  end
+
+module IntervalAnalysis =
+  struct
+    
+    let max_value = 2147483647
+    let min_value = -2147483648
+  
+    let compare_pairs (x, _) (y, _) = compare x y
+  
+    let sort_state state = List.sort compare state
+    
+    let change_state state1 state2 = sort_state state1 <> sort_state state2
+  
+    let rec get_interval x = function
+        | (y, int)::rest -> if x = y then Some int else get_interval x rest
+        | [] -> None
+  
+    let merge (a, b) (c, d) = min a c, max b d
+  
+    let rec (@@@) state1 state2 = match state1 with
+        | (x, int)::rest -> 
+            let x_int = match get_interval x state2 with
+                | Some int2 -> merge int int2
+                | None -> int
+            in
+            let state2_no_x = List.filter (fun (y, _) -> x <> y) state2 in
+            (x, x_int) :: (rest @@@ state2_no_x) 
+        | [] -> state2 
+  
+    let wide_merge (a, b) (c, d) = 
+        let r = if d > b then max_value else b in
+        let l = if a > c then min_value else c in
+        (l, r)
+  
+    let rec (@@@@) state1 state2 = match state1 with
+        | (x, int)::rest -> 
+            let x_int = match get_interval x state2 with
+                | Some int2 -> wide_merge int int2
+                | None -> int
+            in
+            let state2_no_x = List.filter (fun (y, _) -> x <> y) state2 in
+            (x, x_int) :: (rest @@@@ state2_no_x) 
+        | [] -> state2 
+  
+    let update_state state (x, int) =
+        if List.exists (fun (y, _) -> x = y) state then
+            List.map (fun (y, int2) -> if x <> y then (y, int2) else (y, int)) state
+        else
+            (x, int) :: state
+  
+    let normalize (a, b) = 
+        if b > max_value || a < min_value then (min_value, max_value) else (a, b)
+  
+    let rec estimate_interval state = 
+        let sign_mode (a, b) (c, d) = 
+            if b <= 0 && d <= 0 then -1 else
+            if a >= 0 && c >= 0 then  1 else 0 
+        in 
+        let sign_interval min_abs max_abs (a, b) (c, d) =
+            match sign_mode (a, b) (c, d) with
+                | -1 -> (-max_abs, -min_abs)
+                | 0  -> (-max_abs,  max_abs)
+                | 1  -> ( min_abs,  max_abs)
+        in 
+        let has_zero (a, b) = a <= 0 && b >= 0 in 
+        function
+        | Expr.Const n -> (n, n)
+        | Expr.Var x -> (match get_interval x state with | Some x -> x)
+        | Expr.Binop (op, l, r) ->
+            let (a, b) = estimate_interval state l in
+            let (c, d) = estimate_interval state r in
+            normalize @@ match op with
+                | "+"  -> (a + c, b + d)
+                | "-"  -> (a - d, b - c)
+                | "*"  -> let min_abs = a * c in
+                          let max_abs = b * d in
+                          sign_interval min_abs max_abs (a, b) (c, d)    
+                | "/"  -> let min_abs = a / d in
+                          let max_abs = b / c in
+                          sign_interval min_abs max_abs (a, b) (c, d)
+                | "%"  -> failwith "Not supported: %"
+                | "<"  -> if b < c  then (1, 1) else
+                          if a >= d then (0, 0) else (0, 1)
+                | "<=" -> if b <= c then (1, 1) else
+                          if a > d  then (0, 0) else (0, 1)
+                | ">"  -> if b <= c then (0, 0) else
+                          if a > d  then (1, 1) else (0, 1)
+                | ">=" -> if b < c  then (0, 0) else
+                          if a >= d then (1, 1) else (0, 1)
+                | "==" -> if a == b && b == c && c == d then (1, 1) else
+                          if b < c || a > d then (0, 0) else (0, 1)
+                | "!=" -> if a == b && b == c && c == d then (0, 0) else
+                          if b < c || a > d then (1, 1) else (0, 1)
+                | "&&" -> if a == 0 && b == 0 then (0, 0) else
+                          if c == 0 && d == 0 then (0, 0) else
+                          if has_zero (a, b) || has_zero (c, d) then (0, 1) else (1, 1)
+                | "!!" -> if a == 0 && b == 0 && c == 0 && d == 0 then (0, 0) else
+                          if has_zero (a, b) && has_zero (c, d) then (0, 1) else (1, 1)
+  
+    let intersect x (a, b) (y, (c, d)) =
+        if x <> y then (y, (c, d)) else
+        let l = max a c in
+        let r = min b d in
+        if l <= r then (y, (l, r)) else
+        (y, (l, l)) (* TODO:  actually it is an empty interval *)
+    
+    let rec constrain e state = match e with
+        | Expr.Binop (op, Expr.Var x, Expr.Const n) -> (match op with
+            | "<"  -> List.map (intersect x (min_value, n - 1)) state
+            | "<=" -> List.map (intersect x (min_value, n)) state
+            | ">"  -> List.map (intersect x (n + 1, max_value)) state
+            | ">=" -> List.map (intersect x (n, max_value)) state
+            | "==" -> List.map (intersect x (n, n)) state
+            | _    -> state)
+        | Expr.Binop ("&&", l, r) -> constrain l (constrain r state)
+        | _ -> state
+  
+    let interval_analysis (prg : Stmt.t) =
+        let module M = MonotoneFramework in
+        let transfer s state = match s with
+            | M.ARead (x, _) -> update_state state (x, (min_value, max_value))
+            | M.AAssign (x, e, _) -> update_state state (x, estimate_interval state e)
+            | _ -> state
+        in
+        let cond_transfer e state = (constrain e state, constrain (TrueExpressions.negate e) state) in
+        MonotoneFramework.forward_analyse prg {
+            init = [];
+            zero = [];
+            combine = (@@@);
+            widening = (@@@@);
+            transfer = transfer;
+            cond_transfer = cond_transfer;
+            change = change_state
+        }
+        (* (fun a -> print_string @@ String.concat ", " (List.map (fun (a, (b, c)) -> Printf.sprintf "(%s, [%d, %d])" a b c) a) ^ "\n") *)
   end
 
 module Optimizations =
