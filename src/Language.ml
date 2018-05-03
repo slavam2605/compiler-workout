@@ -33,8 +33,10 @@ module Value =
     let of_string s = String s
     let of_array  a = Array  a
 
+    let rec list_init i n f = if i >= n then [] else (f i) :: (list_init (i + 1) n f) 
+
     let update_string s i x = String.init (String.length s) (fun j -> if j = i then x else s.[j])
-    let update_array  a i x = List.init   (List.length a)   (fun j -> if j = i then x else List.nth a j)
+    let update_array  a i x = list_init   (List.length a)   (fun j -> if j = i then x else List.nth a j)
 
   end
        
