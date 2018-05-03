@@ -153,13 +153,25 @@ module Expr =
     *)                                                       
     let rec eval env ((st, i, o, r) as conf) expr =      
       (match expr with
-      | Const n -> (st, i, o, Some (Value.of_int n))
+      | Const n  -> (st, i, o, Some (Value.of_int n))
+      | Array a  -> let (st, i, o, res) = eval_list env conf a in
+                    (st, i, o, Some (Value.of_array res))
+      | String s -> (st, i, o, Some (Value.of_string s))
       | Var   x -> (st, i, o, Some (State.eval st x))
       | Binop (op, x, y) -> let ((st, i, o, Some r1) as conf) = eval env conf x in 
                             let ((st, i, o, Some r2) as conf) = eval env conf y in
                             (st, i, o, Some (Value.of_int @@ to_func op (Value.to_int r1) (Value.to_int r2)))
       | Call (f, params) -> let (st, i, o, eval_params) = eval_list env conf params in
-                            env#definition env f eval_params conf)
+                            env#definition env f eval_params conf
+      | Elem (e, idx)    -> let (st, i, o, Some eval_idx) = eval env conf idx in
+                            let (st, i, o, Some v) = eval env (st, i, o, None) e in
+                            (st, i, o, Some (match v with
+                                | Value.Array list -> List.nth list @@ Value.to_int eval_idx
+                                | Value.String s -> Value.of_int @@ Char.code @@ String.get s @@ Value.to_int eval_idx))
+      | Length e         -> let (st, i, o, Some v) = eval env conf e in
+                            (st, i, o, Some (match v with
+                                | Value.Array list -> Value.of_int @@ List.length list
+                                | Value.String s -> Value.of_int @@ String.length s)))
     and eval_list env conf xs =
       let vs, (st, i, o, _) =
         List.fold_left
@@ -192,10 +204,19 @@ module Expr =
         `Lefta, ["*" ; "/"; "%"];
               |] 
          )
-         primary);
+         secondary);
+      
+      secondary: p:primary r:("[" i:parse "]" {`Elem i} | "." "length" {`Length})*
+            { List.fold_left (fun p x -> match x with 
+                | `Elem i -> Elem (p, i)
+                | `Length -> Length p
+            ) p r };
       
       primary:
         n:DECIMAL {Const n}
+      | c:CHAR    {Const (Char.code c)}
+      | s:STRING  {String (String.sub s 1 (String.length s - 2))}
+      | "[" es:!(Util.list0 parse) "]" { Array es }
       | x:IDENT p:("(" params:!(Util.list0 parse) ")" {Call (x, params)} | empty {Var x}) {p}
       | -"(" parse -")"
     )
@@ -247,8 +268,9 @@ module Stmt =
       match stmt with
 (* SkipSkip *)      | Skip               -> if k = Skip then (st, i, o, None)
 (* Skip *)                                  else eval env conf Skip k
-(* Assign *)        | Assign (x, is, e)  -> let (st, i, o, Some v) as conf = Expr.eval env conf e in 
-                                            let conf = (State.update x v st, i, o, None) in
+(* Assign *)        | Assign (x, is, e)  -> let (st, i, o, Some v) as conf = Expr.eval env conf e in
+                                            let (st, i, o, is) = Expr.eval_list env (st, i, o, None) is in 
+                                            let conf = (update st x v is, i, o, None) in
                                             eval env conf Skip k
 (* Seq *)           | Seq    (s1, s2)    -> eval env conf (s2 <*> k) s1
                     | If     (e, s1, s2) -> let ((_, _, _, Some v) as conf) = Expr.eval env conf e in
@@ -288,7 +310,7 @@ module Stmt =
           let newElseBody = List.fold_right (fun (e_, t_) t -> If (e_, t_, t)) elifs elseBody in
           If (e, t, newElseBody)
         }
-      | x:IDENT ":=" e:!(Expr.parse)    {Assign (x, [], e)}
+      | x:IDENT idx:(-"[" !(Expr.parse) -"]")* ":=" e:!(Expr.parse)    {Assign (x, idx, e)}
       | name:IDENT "(" params:(!(Util.list)[ostap (!(Expr.parse))])? ")" {Call (name, default [] params)}
     )
       

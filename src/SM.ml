@@ -50,7 +50,8 @@ let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
 	      					       | "nz" -> (!=) 0
 	      				        in
 	      				        if predicate x then eval env (cstack, stack', c) (env#labeled s) else eval env (cstack, stack', c) prg'
-            | CALL (f, _, _) -> eval env ((prg', st)::cstack, stack, c) (env#labeled f)
+            | CALL (f, n, p) -> if env#is_label f then eval env ((prg', st)::cstack, stack, c) (env#labeled f)
+                                else eval env (env#builtin conf f n p) prg'
             | END | RET _    -> (match cstack with
                                     | (p, st')::cstack' -> eval env (cstack', stack, (State.leave st st', i, o)) p
                                     | [] -> conf)
@@ -58,8 +59,11 @@ let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
 		     (match insn with
               | BINOP op        -> let y::x::stack' = stack in (cstack, Value.of_int (Expr.to_func op (Value.to_int x) (Value.to_int y)) :: stack', c)
 		      | CONST i         -> (cstack, Value.of_int i :: stack, c)
+		      | STRING s        -> (cstack, Value.of_string s :: stack, c)
 		      | LD x            -> (cstack, State.eval st x :: stack, c)
 		      | ST x            -> let z::stack'    = stack in (cstack, stack', (State.update x z st, i, o))
+		      | STA (x, n)      -> let v::is, stack' = split (n + 1) stack in 
+		                           (cstack, stack', (Stmt.update st x v @@ List.rev is, i, o))
 		      | LABEL s         -> conf
 		      | BEGIN (_, p, l) -> let enter_st = State.enter st (p @ l) in
 		                           let (st', stack') = List.fold_right (
@@ -114,10 +118,15 @@ let rec compile' env p =
   | Expr.Const n          -> [CONST n]
   | Expr.Binop (op, x, y) -> expr x @ expr y @ [BINOP op]
   | Expr.Call (f, params) -> List.concat (List.map expr params) @ [CALL (f, List.length params, false)]
+  | Expr.String s         -> [STRING s]
+  | Expr.Array elems      -> List.concat (List.map expr elems) @ [CALL ("$array", List.length elems, false)]
+  | Expr.Elem (a, i)      -> expr a @ expr i @ [CALL ("$elem", 2, false)]
+  | Expr.Length a         -> expr a @ [CALL ("$length", 1, false)]
   in
   match p with
   | Stmt.Seq (s1, s2)      -> compile' env s1 @ compile' env s2
-  | Stmt.Assign (x, is, e) -> expr e @ [ST x]
+  | Stmt.Assign (x, [], e) -> expr e @ [ST x]
+  | Stmt.Assign (x, is, e) -> List.concat (List.map expr is) @ expr e @ [STA (x, List.length is)]
   | Stmt.Skip              -> []
   | Stmt.If (e, s1, s2)    -> let fLabel = env#next_label in
   						      let eLabel = env#next_label in
