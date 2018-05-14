@@ -120,35 +120,47 @@ class env =
 			label <- label + 1; Printf.sprintf "L%d" last_label
 	end
 
-let rec compile' env p =
-  let rec expr = function
+let rec compile' lend env p =
+  let label s = "L" ^ s in
+  let rec call f args p =
+    let args_code = List.concat @@ List.map expr args in
+    args_code @ [CALL (label f, List.length args, p)]
+  and pattern lfalse _ = failwith "Not implemented"
+  and bindings p = failwith "Not implemented"
+  and expr = function
   | Expr.Var   x          -> [LD x]
   | Expr.Const n          -> [CONST n]
   | Expr.Binop (op, x, y) -> expr x @ expr y @ [BINOP op]
-  | Expr.Call (f, params) -> List.concat (List.map expr params) @ [CALL (f, List.length params, false)]
+  | Expr.Call (f, params) -> call f params false
   | Expr.String s         -> [STRING s]
-  | Expr.Array elems      -> List.concat (List.map expr elems) @ [CALL ("$array", List.length elems, false)]
-  | Expr.Elem (a, i)      -> expr a @ expr i @ [CALL ("$elem", 2, false)]
-  | Expr.Length a         -> expr a @ [CALL ("$length", 1, false)]
+  | Expr.Array elems      -> call ".array" elems false
+  | Expr.Elem (a, i)      -> call ".elem" [a; i] false
+  | Expr.Length a         -> call ".length" [a] false
   in
   match p with
-  | Stmt.Seq (s1, s2)      -> compile' env s1 @ compile' env s2
-  | Stmt.Assign (x, [], e) -> expr e @ [ST x]
-  | Stmt.Assign (x, is, e) -> List.concat (List.map expr is) @ expr e @ [STA (x, List.length is)]
-  | Stmt.Skip              -> []
+  | Stmt.Seq (s1, s2)      -> let f1, p1 = compile' lend env s1 in
+                              let f2, p2 = compile' lend env s2 in
+                              f1 || f2, p1 @ p2
+  | Stmt.Assign (x, [], e) -> false, expr e @ [ST x]
+  | Stmt.Assign (x, is, e) -> false, List.concat (List.map expr is) @ expr e @ [STA (x, List.length is)]
+  | Stmt.Skip              -> false, []
   | Stmt.If (e, s1, s2)    -> let fLabel = env#next_label in
   						      let eLabel = env#next_label in
-  						      expr e @ [CJMP ("z", fLabel)] @ 
-  						      compile' env s1 @ [JMP eLabel; LABEL fLabel] @ 
-  						      compile' env s2 @ [LABEL eLabel]
+  						      let f1, p1 = compile' lend env s1 in
+  						      let f2, p2 = compile' lend env s2 in
+  						      f1 || f2, expr e @ [CJMP ("z", fLabel)] @
+  						      p1 @ [JMP eLabel; LABEL fLabel] @
+  						      p2 @ [LABEL eLabel]
   | Stmt.While (e, s)      -> let loopLabel = env#next_label in
   						      let endLabel  = env#next_label in
-  						      [LABEL loopLabel] @ expr e @ [CJMP ("z", endLabel)] @
-  						      compile' env s @ [JMP loopLabel; LABEL endLabel]
+  						      let f, p = compile' lend env s in
+  						      f, [LABEL loopLabel] @ expr e @ [CJMP ("z", endLabel)] @
+  						      p @ [JMP loopLabel; LABEL endLabel]
   | Stmt.Repeat (s, e)     -> let startLabel = env#next_label in
-  						      [LABEL startLabel] @ compile' env s @ expr e @ [CJMP ("z", startLabel)]
-  | Stmt.Call (f, p)       -> List.concat (List.map expr p) @ [CALL (f, List.length p, true)]
-  | Stmt.Return r          -> (match r with | None -> [RET false] | Some v -> expr v @ [RET true])
+                              let f, p = compile' lend env s in
+  						      f, [LABEL startLabel] @ p @ expr e @ [CJMP ("z", startLabel)]
+  | Stmt.Call (f, p)       -> false, call f p true
+  | Stmt.Return r          -> false, (match r with | None -> [RET false] | Some v -> expr v @ [RET true])
 
 (* Stack machine compiler
 
@@ -159,16 +171,9 @@ let rec compile' env p =
 *)
 let compile (defs, p) =
   let label s = "L" ^ s in
-  let rec call f args p =
-    let args_code = List.concat @@ List.map expr args in
-    args_code @ [CALL (label f, List.length args, p)]
-  and pattern lfalse _ = failwith "Not implemented"
-  and bindings p = failwith "Not implemented"
-  and expr e = failwith "Not implemented" in
-  let compile_stmt l env stmt = compile' env stmt in
   let compile_def env (name, (args, locals, stmt)) =
-    let lend, env       = env#get_label in
-    let env, flag, code = compile_stmt lend env stmt in
+    let lend       = env#next_label in
+    let flag, code = compile' lend env stmt in
     env,
     [LABEL name; BEGIN (name, args, locals)] @
     code @
@@ -182,6 +187,6 @@ let compile (defs, p) =
       (env, [])
       defs
   in
-  let lend, env = env#get_label in
-  let _, flag, code = compile_stmt lend env p in
+  let lend = env#next_label in
+  let flag, code = compile' lend env p in
   (if flag then code @ [LABEL lend] else code) @ [END] @ (List.concat def_code)
