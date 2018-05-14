@@ -323,6 +323,21 @@ module Stmt =
       in
       State.update x (match is with [] -> v | _ -> update (State.eval st x) v is) st
 
+    let rec matches patt value = match patt, value with
+        | Pattern.Wildcard, _ -> true
+        | Pattern.Ident _, _ -> true
+        | Pattern.Sexp (tag, patts), Value.Sexp (rtag, values) ->
+            tag = rtag && List.for_all2 matches patts values
+        | Pattern.Sexp (_, _), _ -> false
+
+    let rec make_bindings' (s, xs) patt value = match patt with
+        | Pattern.Wildcard        -> s, xs
+        | Pattern.Ident x         -> (fun y -> if x = y then value else s y), x::xs
+        | Pattern.Sexp (_, patts) -> match value with | Value.Sexp (_, values) ->
+                                     List.fold_left2 make_bindings' (s, xs) patts values
+
+    let make_bindings patt value = make_bindings' (State.undefined, []) patt value
+
     let rec eval env ((st, i, o, r) as conf) k stmt =
       let (<*>) a b = match a, b with
           | Skip, s -> s
@@ -344,14 +359,28 @@ module Stmt =
                     | While  (e, s)      -> let ((_, _, _, Some v) as conf) = Expr.eval env conf e in 
 (* WhileTrue *)                             if Value.to_int v != 0 then eval env conf (stmt <*> k) s
 (* WhileFalse *)                            else eval env conf Skip k
-                    | Repeat (s, e)      -> eval env conf (While (not e, s) <*> k) s 
+                    | Repeat (s, e)      -> eval env conf (While (not e, s) <*> k) s
+                    | Case (e, branches) -> let (st, i, o, Some v) as conf = Expr.eval env conf e in
+                                            let rec processBranches value = function
+                                                | (patt, body) :: rest ->
+                                                    if matches patt value then
+                                                        let s, xs = make_bindings patt value in
+                                                        let st = State.push st s xs in
+(* CaseMatch *)                                         eval env (st, i, o, None) (Leave <*> k) body
+                                                    else
+                                                        processBranches value rest
+(* CaseNotMatch *)                              | [] -> eval env conf Skip k
+                                            in
+                                            processBranches v branches
 (* Call *)          | Call   (f, params) -> let step (conf, list) e = (let ((_, _, _, Some v) as conf) = Expr.eval env conf e in conf, list @ [v]) in 
                                             let conf, eval_params = List.fold_left step (conf, []) params in 
                                             let conf = env#definition env f eval_params conf in
                                             eval env conf Skip k
-                    | Return r           -> match r with
+                    | Return r           -> (match r with
 (* ReturnEmpty *)                             | None   -> (st, i, o, None)
-(* Return *)                                  | Some e -> Expr.eval env conf e
+(* Return *)                                  | Some e -> Expr.eval env conf e)
+                    | Leave              -> let st = State.drop st in
+(* Leave *)                                 eval env (st, i, o, None) Skip k
          
     (* Statement parser *)
     ostap (
