@@ -27,8 +27,6 @@ with show
                                                    
 (* The type for the stack machine program *)
 type prg = insn list
-
-let print_prg p = List.iter (fun i -> Printf.printf "%s\n" (show(insn) i)) p
                             
 (* The type for the stack machine configuration: control stack, stack and configuration from statement
    interpreter
@@ -41,15 +39,46 @@ type config = (prg * State.t) list * Value.t list * Expr.config
 
    Takes an environment, a configuration and a program, and returns a configuration as a result. The
    environment is used to locate a label to jump to (via method env#labeled <label_name>)
-*)                                                  
+*)
 let split n l =
   let rec unzip (taken, rest) = function
   | 0 -> (List.rev taken, rest)
   | n -> let h::tl = rest in unzip (h::taken, tl) (n-1)
   in
   unzip ([], l) n
-          
-let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) _ = failwith "Not yet implemented"
+
+let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
+	| [] -> conf
+	| insn :: prg' -> 
+		match insn with
+			| JMP s          -> eval env conf (env#labeled s)
+	    	| CJMP (f, s)    -> let (Value.Int x)::stack' = stack in 
+	      				        let predicate = match f with
+	      				           | "z"  -> (==) 0
+	      					       | "nz" -> (!=) 0
+	      				        in
+	      				        if predicate x then eval env (cstack, stack', c) (env#labeled s) else eval env (cstack, stack', c) prg'
+            | CALL (f, n, p) -> if env#is_label f then eval env ((prg', st)::cstack, stack, c) (env#labeled f)
+                                else eval env (env#builtin conf f n p) prg'
+            | END | RET _    -> (match cstack with
+                                    | (p, st')::cstack' -> eval env (cstack', stack, (State.leave st st', i, o)) p
+                                    | [] -> conf)
+	      	| _ -> eval env
+		     (match insn with
+              | BINOP op        -> let y::x::stack' = stack in (cstack, Value.of_int (Expr.to_func op (Value.to_int x) (Value.to_int y)) :: stack', c)
+		      | CONST i         -> (cstack, Value.of_int i :: stack, c)
+		      | STRING s        -> (cstack, Value.of_string s :: stack, c)
+		      | LD x            -> (cstack, State.eval st x :: stack, c)
+		      | ST x            -> let z::stack'    = stack in (cstack, stack', (State.update x z st, i, o))
+		      | STA (x, n)      -> let v::is, stack' = split (n + 1) stack in 
+		                           (cstack, stack', (Stmt.update st x v @@ List.rev is, i, o))
+		      | LABEL s         -> conf
+		      | BEGIN (_, p, l) -> let enter_st = State.enter st (p @ l) in
+		                           let (st', stack') = List.fold_right (
+		                               fun p (st, x::stack') -> (State.update p x st, stack')  
+                                   ) p (enter_st, stack) in
+		                           (cstack, stack', (st', i, o))
+		     ) prg'
 
 (* Top-level evaluation
 
@@ -58,7 +87,6 @@ let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) _ = failwith "Not 
    Takes a program, an input stream, and returns an output stream this program calculates
 *)
 let run p i =
-  (* print_prg p; *)
   let module M = Map.Make (String) in
   let rec make_map m = function
   | []              -> m
@@ -85,6 +113,43 @@ let run p i =
   in
   o
 
+class env =
+	object (self)
+		val mutable label = 0
+		method next_label = let last_label = label in
+			label <- label + 1; Printf.sprintf "L%d" last_label
+	end
+
+let rec compile' env p =
+  let rec expr = function
+  | Expr.Var   x          -> [LD x]
+  | Expr.Const n          -> [CONST n]
+  | Expr.Binop (op, x, y) -> expr x @ expr y @ [BINOP op]
+  | Expr.Call (f, params) -> List.concat (List.map expr params) @ [CALL (f, List.length params, false)]
+  | Expr.String s         -> [STRING s]
+  | Expr.Array elems      -> List.concat (List.map expr elems) @ [CALL ("$array", List.length elems, false)]
+  | Expr.Elem (a, i)      -> expr a @ expr i @ [CALL ("$elem", 2, false)]
+  | Expr.Length a         -> expr a @ [CALL ("$length", 1, false)]
+  in
+  match p with
+  | Stmt.Seq (s1, s2)      -> compile' env s1 @ compile' env s2
+  | Stmt.Assign (x, [], e) -> expr e @ [ST x]
+  | Stmt.Assign (x, is, e) -> List.concat (List.map expr is) @ expr e @ [STA (x, List.length is)]
+  | Stmt.Skip              -> []
+  | Stmt.If (e, s1, s2)    -> let fLabel = env#next_label in
+  						      let eLabel = env#next_label in
+  						      expr e @ [CJMP ("z", fLabel)] @ 
+  						      compile' env s1 @ [JMP eLabel; LABEL fLabel] @ 
+  						      compile' env s2 @ [LABEL eLabel]
+  | Stmt.While (e, s)      -> let loopLabel = env#next_label in
+  						      let endLabel  = env#next_label in
+  						      [LABEL loopLabel] @ expr e @ [CJMP ("z", endLabel)] @
+  						      compile' env s @ [JMP loopLabel; LABEL endLabel]
+  | Stmt.Repeat (s, e)     -> let startLabel = env#next_label in
+  						      [LABEL startLabel] @ compile' env s @ expr e @ [CJMP ("z", startLabel)]
+  | Stmt.Call (f, p)       -> List.concat (List.map expr p) @ [CALL (f, List.length p, true)]
+  | Stmt.Return r          -> (match r with | None -> [RET false] | Some v -> expr v @ [RET true])
+
 (* Stack machine compiler
 
      val compile : Language.t -> prg
@@ -92,7 +157,7 @@ let run p i =
    Takes a program in the source language and returns an equivalent program for the
    stack machine
 *)
-let compile (defs, p) = 
+let compile (defs, p) =
   let label s = "L" ^ s in
   let rec call f args p =
     let args_code = List.concat @@ List.map expr args in
@@ -100,7 +165,7 @@ let compile (defs, p) =
   and pattern lfalse _ = failwith "Not implemented"
   and bindings p = failwith "Not implemented"
   and expr e = failwith "Not implemented" in
-  let rec compile_stmt l env stmt =  failwith "Not implemented" in
+  let compile_stmt l env stmt = compile' env stmt in
   let compile_def env (name, (args, locals, stmt)) =
     let lend, env       = env#get_label in
     let env, flag, code = compile_stmt lend env stmt in
@@ -110,12 +175,7 @@ let compile (defs, p) =
     (if flag then [LABEL lend] else []) @
     [END]
   in
-  let env =
-    object
-      val ls = 0
-      method get_label = (label @@ string_of_int ls), {< ls = ls + 1 >}
-    end
-  in
+  let env = new env in
   let env, def_code =
     List.fold_left
       (fun (env, code) (name, others) -> let env, code' = compile_def env (label name, others) in env, code'::code)
@@ -124,5 +184,4 @@ let compile (defs, p) =
   in
   let lend, env = env#get_label in
   let _, flag, code = compile_stmt lend env p in
-  (if flag then code @ [LABEL lend] else code) @ [END] @ (List.concat def_code) 
-
+  (if flag then code @ [LABEL lend] else code) @ [END] @ (List.concat def_code)
