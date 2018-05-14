@@ -192,6 +192,8 @@ module Expr =
       | Const n  -> (st, i, o, Some (Value.of_int n))
       | Array a  -> let (st, i, o, res) = eval_list env conf a in
                     (st, i, o, Some (Value.of_array res))
+      | Sexp (s, vs) -> let (st, i, o, res) = eval_list env conf vs in
+                        (st, i, o, Some (Value.sexp s res))
       | String s -> (st, i, o, Some (Value.of_string s))
       | Var   x -> (st, i, o, Some (State.eval st x))
       | Binop (op, x, y) -> let ((st, i, o, Some r1) as conf) = eval env conf x in 
@@ -254,6 +256,7 @@ module Expr =
       | c:CHAR    {Const (Char.code c)}
       | s:STRING  {String (String.sub s 1 (String.length s - 2))}
       | "[" es:!(Util.list0 parse) "]" { Array es }
+      | "`" x:IDENT body:(-"(" !(Util.list parse) -")")? {Sexp (x, default [] body)}
       | x:IDENT p:("(" params:!(Util.list0 parse) ")" {Call (x, params)} | empty {Var x}) {p}
       | -"(" parse -")"
     )
@@ -277,7 +280,10 @@ module Stmt =
 
         (* Pattern parser *)                                 
         ostap (
-          parse: empty {failwith "Not implemented"}
+          parse:
+            "`" x:IDENT body:(-"(" !(Util.list parse) -")")? {Sexp (x, default [] body)}
+          | "_" {Wildcard}
+          | x:IDENT {Ident x}
         )
         
         let vars p =
@@ -369,6 +375,9 @@ module Stmt =
           let newElseBody = List.fold_right (fun (e_, t_) t -> If (e_, t_, t)) elifs elseBody in
           If (e, t, newElseBody)
         }
+      | %"case" e:!(Expr.parse) %"of"
+            branches:!(Util.listBy)[ostap ("|")][ostap (!(Pattern.parse) -"->" parse)]
+        %"esac" {Case (e, branches)}
       | x:IDENT idx:(-"[" !(Expr.parse) -"]")* ":=" e:!(Expr.parse)    {Assign (x, idx, e)}
       | name:IDENT "(" params:(!(Util.list)[ostap (!(Expr.parse))])? ")" {Call (name, default [] params)}
     )
