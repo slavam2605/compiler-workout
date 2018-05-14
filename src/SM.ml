@@ -68,6 +68,8 @@ let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
               | BINOP op        -> let y::x::stack' = stack in (cstack, Value.of_int (Expr.to_func op (Value.to_int x) (Value.to_int y)) :: stack', c)
 		      | CONST i         -> (cstack, Value.of_int i :: stack, c)
 		      | STRING s        -> (cstack, Value.of_string s :: stack, c)
+		      | SEXP (t, n)     -> let elems, stack' = split n stack in
+		                           (cstack, Value.sexp t elems :: stack', c)
 		      | LD x            -> (cstack, State.eval st x :: stack, c)
 		      | ST x            -> let z::stack'    = stack in (cstack, stack', (State.update x z st, i, o))
 		      | STA (x, n)      -> let v::is, stack' = split (n + 1) stack in 
@@ -78,6 +80,20 @@ let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
 		                               fun p (st, x::stack') -> (State.update p x st, stack')  
                                    ) p (enter_st, stack) in
 		                           (cstack, stack', (st', i, o))
+              | DROP            -> let _::stack' = stack in
+                                   (cstack, stack', c)
+              | DUP             -> let a::_ = stack in
+                                   (cstack, a::stack, c)
+              | SWAP            -> let a::b::stack' = stack in
+                                   (cstack, b::a::stack', c)
+              | TAG s           -> let a::stack' = stack in
+                                   let res = match a with
+                                       | Value.Sexp (s, _) -> Value.of_int 1
+                                       | _ -> Value.of_int 0
+                                   in
+                                   (cstack, res::stack', c)
+              | ENTER xs        -> (cstack, stack, (State.push st State.undefined xs, i, o))
+              | LEAVE           -> (cstack, stack, (State.drop st, i, o))
 		     ) prg'
 
 (* Top-level evaluation
@@ -136,6 +152,7 @@ let rec compile' lend env p =
   | Expr.Array elems      -> call ".array" elems false
   | Expr.Elem (a, i)      -> call ".elem" [a; i] false
   | Expr.Length a         -> call ".length" [a] false
+  | Expr.Sexp (tag, es)   -> (List.concat @@ List.map expr es) @ [SEXP (tag, List.length es)]
   in
   match p with
   | Stmt.Seq (s1, s2)      -> let f1, p1 = compile' lend env s1 in
