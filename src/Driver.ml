@@ -50,7 +50,11 @@ let main =
 	  if interpret 
 	  then Language.eval prog input 
 	  else let compiledSM = SM.compile prog in
-	  List.iter (fun instruction -> print_string ((GT.transform(SM.insn) (new @SM.insn[show]) () instruction) ^ "\n")) compiledSM;
+	  if SM.debug then begin
+	    print_string "Compiled code:\n";
+	    List.iter (fun instruction -> print_string ((GT.transform(SM.insn) (new @SM.insn[show]) () instruction) ^ "\n")) compiledSM;
+	    print_string "\nRun trace: \n"
+	  end;
 	  SM.run compiledSM input
 	in
 	List.iter (fun i -> Printf.printf "%d\n" i) output
