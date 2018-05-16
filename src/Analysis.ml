@@ -5,9 +5,7 @@ module MonotoneFramework =
     
     (* Language statement annotated with analyse result *)
     type 'a t =
-        | ARead   of string * ('a * 'a)
-        | AWrite  of Expr.t * ('a * 'a)
-        | AAssign of string * Expr.t * ('a * 'a)
+        | AAssign of string * Expr.t list * Expr.t * ('a * 'a)
         | ASeq    of 'a t * 'a t * ('a * 'a)
         | ASkip   of ('a * 'a)
         | AIf     of Expr.t * 'a t * 'a t * ('a * 'a)
@@ -16,9 +14,7 @@ module MonotoneFramework =
         | ACall   of string * Expr.t list * ('a * 'a)
     
     let rec annotate (prg : Stmt.t) (init : 'a) : 'a t = match prg with
-        | Stmt.Read    x          -> ARead (x, (init, init))
-        | Stmt.Write   e          -> AWrite (e, (init, init))
-        | Stmt.Assign (x, e)      -> AAssign (x, e, (init, init))
+        | Stmt.Assign (x, is, e)  -> AAssign (x, is, e, (init, init))
         | Stmt.Seq    (s1, s2)    -> ASeq (annotate s1 init, annotate s2 init, (init, init))
         | Stmt.Skip               -> ASkip (init, init)
         | Stmt.If     (e, s1, s2) -> AIf (e, annotate s1 init, annotate s2 init, (init, init))
@@ -28,9 +24,7 @@ module MonotoneFramework =
 
     let rec transform (aprg : 'a t) (transformer : 'a t -> Stmt.t option) : Stmt.t =
         match transformer aprg with | Some r -> r | None -> match aprg with
-            | ARead   (x, _)         -> Stmt.Read x
-            | AWrite  (e, _)         -> Stmt.Write e
-            | AAssign (x, e, _)      -> Stmt.Assign (x, e)
+            | AAssign (x, is, e, _)  -> Stmt.Assign (x, is, e)
             | ASeq    (s1, s2, _)    -> Stmt.Seq (transform s1 transformer, transform s2 transformer)
             | ASkip   _              -> Stmt.Skip
             | AIf     (e, s1, s2, _) -> Stmt.If (e, transform s1 transformer, transform s2 transformer)
@@ -39,9 +33,7 @@ module MonotoneFramework =
             | ACall   (f, params, _) -> Stmt.Call (f, params)
     
     let rec print_result elem_printer = function
-        | ARead   (_, (a1, a2))       -> print_string @@ "ARead "   ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
-        | AWrite  (_, (a1, a2))       -> print_string @@ "AWrite "  ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
-        | AAssign (_, _, (a1, a2))    -> print_string @@ "AAssign " ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
+        | AAssign (_, _, _, (a1, a2)) -> print_string @@ "AAssign " ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
         | ASeq    (l, r, (a1, a2))    -> print_result elem_printer l;
                                          print_result elem_printer r
         | ASkip   (a1, a2)            -> print_string @@ "ASkip "   ^ elem_printer a1 ^ " -> " ^ elem_printer a2; print_string "\n"
@@ -71,9 +63,7 @@ module MonotoneFramework =
     let rec forward_analyse' (aprg : 'a t) (input : 'a) (combine : 'a -> 'a -> 'a) (widening : 'a -> 'a -> 'a) (transfer : 'a t -> 'a -> 'a) (cond_transfer : Expr.t -> 'a -> 'a * 'a) (change : 'a -> 'a -> bool) (print_analysis : 'a -> unit) : 'a * 'a t * bool =
         let exit_analysis = transfer aprg input in
         match aprg with
-        | ARead   (x, (_, a))         -> (exit_analysis, ARead (x, (input, exit_analysis)), change a exit_analysis)
-        | AWrite  (e, (_, a))         -> (exit_analysis, AWrite (e, (input, exit_analysis)), change a exit_analysis)
-        | AAssign (x, e, (_, a))      -> (exit_analysis, AAssign (x, e, (input, exit_analysis)), change a exit_analysis)
+        | AAssign (x, is, e, (_, a))  -> (exit_analysis, AAssign (x, is, e, (input, exit_analysis)), change a exit_analysis)
         | ASkip (_, a)                -> (exit_analysis, ASkip (input, exit_analysis), change a exit_analysis)
         | ACall   (f, params, (_, a)) -> (exit_analysis, ACall (f, params, (input, exit_analysis)), change a exit_analysis)
         | ASeq    (s1, s2, (_, a))    -> let (exit1, as1, change1) = forward_analyse' s1 input combine widening transfer cond_transfer change print_analysis in
@@ -114,36 +104,34 @@ module MonotoneFramework =
     let rec backward_analyse' (aprg: 'a t) (output : 'a) (combine : 'a -> 'a -> 'a) (transfer : 'a t -> 'a -> 'a) (change : 'a -> 'a -> bool) : 'a * 'a t * bool =
         let input_analysis = transfer aprg output in
         match aprg with
-        | ARead (x, (a, _))         -> (input_analysis, ARead (x, (input_analysis, output)), change a input_analysis)
-        | AWrite (e, (a, _))        -> (input_analysis, AWrite (e, (input_analysis, output)), change a input_analysis)
-        | AAssign (x, e, (a, _))    -> (input_analysis, AAssign (x, e, (input_analysis, output)), change a input_analysis)
-        | ASkip (a, _)              -> (input_analysis, ASkip (input_analysis, output), change a input_analysis)
-        | ACall (f, params, (a, _)) -> (input_analysis, ACall (f, params, (input_analysis, output)), change a input_analysis)
-        | ASeq (s1, s2, (a, _))     -> let (input2, as2, change2) = backward_analyse' s2 output combine transfer change in
-                                       let (input1, as1, change1) = backward_analyse' s1 input2 combine transfer change in
-                                       (input1, ASeq (as1, as2, (input1, output)), change1 || change2 || change a input2)
-        | AIf (e, s1, s2, (a, _))   -> let (input1, as1, change1) = backward_analyse' s1 output combine transfer change in
-                                       let (input2, as2, change2) = backward_analyse' s2 output combine transfer change in
-                                       let input = combine input1 input2 in
-                                       let input_if = transfer aprg input in
-                                       (input_if, AIf (e, as1, as2, (input_if, output)), change1 || change2 || change a input_if)
-        | AWhile (e, s, (a, _))     -> let global_change = ref true in
-                                       let annotated_body = ref s in
-                                       let current_output = ref output in
-                                       let ever_change = ref false in
-                                       let last_input = ref output in
-                                       while !global_change do
-                                           let (input, new_body, changed) = backward_analyse' !annotated_body !current_output combine transfer change in
-                                           current_output := combine output input;
-                                           annotated_body := new_body;
-                                           global_change := changed;
-                                           if changed then ever_change := true;
-                                           last_input := input
-                                       done;
-                                       let input = combine !last_input output in
-                                       let input_while = transfer aprg input in
-                                       (input_while, AWhile (e, !annotated_body, (input_while, !current_output)), !ever_change || change a input_while)
-        | ARepeat (s, e, (a, _))    -> failwith "Not supported: Repeat"
+        | AAssign (x, is, e, (a, _)) -> (input_analysis, AAssign (x, is, e, (input_analysis, output)), change a input_analysis)
+        | ASkip (a, _)               -> (input_analysis, ASkip (input_analysis, output), change a input_analysis)
+        | ACall (f, params, (a, _))  -> (input_analysis, ACall (f, params, (input_analysis, output)), change a input_analysis)
+        | ASeq (s1, s2, (a, _))      -> let (input2, as2, change2) = backward_analyse' s2 output combine transfer change in
+                                        let (input1, as1, change1) = backward_analyse' s1 input2 combine transfer change in
+                                        (input1, ASeq (as1, as2, (input1, output)), change1 || change2 || change a input2)
+        | AIf (e, s1, s2, (a, _))    -> let (input1, as1, change1) = backward_analyse' s1 output combine transfer change in
+                                        let (input2, as2, change2) = backward_analyse' s2 output combine transfer change in
+                                        let input = combine input1 input2 in
+                                        let input_if = transfer aprg input in
+                                        (input_if, AIf (e, as1, as2, (input_if, output)), change1 || change2 || change a input_if)
+        | AWhile (e, s, (a, _))      -> let global_change = ref true in
+                                        let annotated_body = ref s in
+                                        let current_output = ref output in
+                                        let ever_change = ref false in
+                                        let last_input = ref output in
+                                        while !global_change do
+                                            let (input, new_body, changed) = backward_analyse' !annotated_body !current_output combine transfer change in
+                                            current_output := combine output input;
+                                            annotated_body := new_body;
+                                            global_change := changed;
+                                            if changed then ever_change := true;
+                                            last_input := input
+                                        done;
+                                        let input = combine !last_input output in
+                                        let input_while = transfer aprg input in
+                                        (input_while, AWhile (e, !annotated_body, (input_while, !current_output)), !ever_change || change a input_while)
+        | ARepeat (s, e, (a, _))     -> failwith "Not supported: Repeat"
 
     let backward_analyse (prg : Stmt.t) (framework : 'a monotone_framework) : 'a t =
         let (_, tree, _) = backward_analyse' (annotate prg framework.zero) framework.init framework.combine framework.transfer framework.change in tree
@@ -180,11 +168,13 @@ module ConstantPropagation =
     let constant_propagation (prg : Stmt.t) =
         let module M = MonotoneFramework in
         let kill s list = match s with
-            | M.AAssign (x, _, _) -> List.filter (fun (y, _) -> x <> y) list
+            | M.AAssign (x, [], _, _) -> List.filter (fun (y, _) -> x <> y) list
+            | M.AAssign  (x, is, _, _) -> failwith "Assignment with indices is not supported"
             | _ -> list
         in
         let gen s list = match s with
-            | M.AAssign (x, e, _) -> (x, const_value list e) :: list
+            | M.AAssign (x, [], e, _) -> (x, const_value list e) :: list
+            | M.AAssign  (x, is, _, _) -> failwith "Assignment with indices is not supported"
             | _ -> list
         in
         let (<*>) f g = fun a b -> g a (f a b) in
@@ -207,11 +197,9 @@ module ConstantPropagation =
         let module M = MonotoneFramework in
         let analyse_result = constant_propagation prg in
         let rec transform = function
-            | M.ARead   (x, (input, _))         -> Stmt.Read x
-            | M.AWrite  (e, (input, _))         -> let value = fold_const input e in
-                                                   Stmt.Write value
-            | M.AAssign (x, e, (input, _))      -> let value = fold_const input e in
-                                                   Stmt.Assign (x, value)
+            | M.AAssign (x, [], e, (input, _))  -> let value = fold_const input e in
+                                                   Stmt.Assign (x, [], value)
+            | M.AAssign  (x, is, _, _)           -> failwith "Assignment with indices is not supported"
             | M.ASkip (input, _)                -> Stmt.Skip
             | M.ACall   (f, params, (input, _)) -> let value_params = List.map (fold_const input) params in
                                                    Stmt.Call (f, value_params)
@@ -283,12 +271,13 @@ module LiveVariables =
     let live_variables (prg : Stmt.t) =
         let module M = MonotoneFramework in
         let kill s list = match s with
-            | M.AAssign (x, _, _) -> List.filter ((<>) x) list
+            | M.AAssign (x, [], _, _) -> List.filter ((<>) x) list
+            | M.AAssign  (x, is, _, _) -> failwith "Assignment with indices is not supported"
             | _ -> list
         in
         let gen s list = match s with
-            | M.AWrite (e, _)     -> used_variables e @@@ list
-            | M.AAssign (_, e, _) -> used_variables e @@@ list
+            | M.AAssign (_, [], e, _) -> used_variables e @@@ list
+            | M.AAssign  (x, is, _, _) -> failwith "Assignment with indices is not supported"
             | M.AIf (e, _, _, _)  -> used_variables e @@@ list
             | M.AWhile (e, _, _)  -> used_variables e @@@ list
             | M.ARepeat (_, e, _) -> used_variables e @@@ list
@@ -311,7 +300,8 @@ module LiveVariables =
          let module M = MonotoneFramework in
          let analyse_result = live_variables prg in
          let transformer = function
-             | M.AAssign (x, e, (_, output)) -> Some (if List.mem x output then Stmt.Assign (x, e) else Skip)
+             | M.AAssign (x, [], e, (_, output)) -> Some (if List.mem x output then Stmt.Assign (x, [], e) else Skip)
+             | M.AAssign  (x, is, _, _) -> failwith "Assignment with indices is not supported"
              | _ -> None
          in
          M.transform analyse_result transformer
@@ -355,7 +345,8 @@ module TrueExpressions =
         let change x y = (List.sort compare x) <> (List.sort compare y) in
         let gen _ list = list in
         let kill s list = match s with 
-            | M.AAssign (x, _, _) -> List.filter (fun e -> not @@ use_var x e) list 
+            | M.AAssign (x, [], _, _) -> List.filter (fun e -> not @@ use_var x e) list
+            | M.AAssign  (x, is, _, _) -> failwith "Assignment with indices is not supported" 
             | _ -> list
         in
         let cond_transfer e list = (list @@@ [e], list @@@ [negate e]) in
@@ -444,9 +435,15 @@ module IntervalAnalysis =
         in 
         let has_zero (a, b) = a <= 0 && b >= 0 in 
         function
-        | Expr.Const n -> (n, n)
-        | Expr.Var x -> (match get_interval x state with | Some x -> x)
-        | Expr.Binop (op, l, r) ->
+        | Expr.Const n          -> (n, n)
+        | Expr.Var x            -> (match get_interval x state with | Some x -> x)
+        | Expr.Array a          -> (min_value, max_value)  
+        | Expr.String s         -> (min_value, max_value)
+        | Expr.Sexp (t, es)     -> (min_value, max_value)
+        | Expr.Elem (a, i)      -> (min_value, max_value)
+        | Expr.Length a         -> (min_value, max_value)
+        | Expr.Call (f, args)   -> (min_value, max_value)
+        | Expr.Binop (op, l, r) -> 
             let (a, b) = estimate_interval state l in
             let (c, d) = estimate_interval state r in
             normalize @@ match op with
@@ -498,8 +495,8 @@ module IntervalAnalysis =
     let interval_analysis (prg : Stmt.t) =
         let module M = MonotoneFramework in
         let transfer s state = match s with
-            | M.ARead (x, _) -> update_state state (x, (min_value, max_value))
-            | M.AAssign (x, e, _) -> update_state state (x, estimate_interval state e)
+            | M.AAssign (x, [], e, _) -> update_state state (x, estimate_interval state e)
+            | M.AAssign  (x, is, _, _) -> failwith "Assignment with indices is not supported"
             | _ -> state
         in
         let cond_transfer e state = (constrain e state, constrain (TrueExpressions.negate e) state) in

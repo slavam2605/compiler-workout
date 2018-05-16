@@ -399,14 +399,16 @@ module Stmt =
          
     let rec pretty_print' indent stmt =
         let next_indent = "    " ^ indent in
+        let pretty_list = function
+            | [] -> ""
+            | x  -> "[" ^ String.concat ", " (List.map Expr.pretty_print x) ^ "]" 
+        in
         match stmt with
         | Seq    (s1, s2)    -> let p1 = pretty_print' indent s1 in
                                         let p2 = pretty_print' indent s2 in
                                         p1 ^ ";\n" ^ p2
         | _ -> indent ^ match stmt with
-            | Read    x          -> "read (" ^ x ^ ")"
-            | Write   e          -> "write (" ^ Expr.pretty_print e ^ ")"
-            | Assign (x, e)      -> x ^ " := " ^ Expr.pretty_print e
+            | Assign (x, is, e)  -> x ^ pretty_list is ^ " := " ^ Expr.pretty_print e
             | Skip               -> "skip"
             | If     (e, s1, s2) -> "if " ^ Expr.pretty_print e ^ " then\n" ^
                                         pretty_print' next_indent s1 ^ "\n" ^
