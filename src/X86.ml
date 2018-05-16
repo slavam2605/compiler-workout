@@ -90,15 +90,11 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile env code =
-  let suffix = function
-  | "<"  -> "l"
-  | "<=" -> "le"
-  | "==" -> "e"
-  | "!=" -> "ne"
-  | ">=" -> "ge"
-  | ">"  -> "g"
-  | _    -> failwith "unknown operator"	
+let rec compile env code = 
+  let is_mem = function
+    | S _ -> true
+    | M _ -> true
+    | _ -> false
   in
   let rec compile' env scode = failwith "Not implemented" in
   compile' env code
