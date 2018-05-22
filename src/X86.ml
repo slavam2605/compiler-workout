@@ -83,6 +83,16 @@ let show instr =
 (* Opening stack machine to use instructions without fully qualified names *)
 open SM
 
+let tag_hash s = 
+    let tag_prefix = String.sub s 0 @@ min 5 @@ String.length s in
+    let char_code = function
+        | '_' -> 53
+        |  c  -> Char.code c - (if c > 'Z' then 70 else 64)
+    in
+    let rec hash acc n = if n >= String.length s then acc
+    else hash ((acc lsl 6) lor char_code s.[n]) n + 1 in
+    hash 0 0
+
 (* Symbolic stack machine evaluator
 
      compile : env -> prg -> env * instr list
@@ -104,7 +114,8 @@ let compile env code =
     let on_stack = function S _ -> true | _ -> false in
     let call env f n p =
       let f =
-        match f.[0] with '.' -> "B" ^ String.sub f 1 (String.length f - 1) | _ -> f
+        match f.[1] with '.' -> "B" ^ String.sub f 2 (String.length f - 2) | _ -> (
+        match f.[0] with '.' -> "B" ^ String.sub f 1 (String.length f - 1) | _ -> f)
       in
       let pushr, popr =
         List.split @@ List.map (fun r -> (Push r, Pop r)) (env#live_registers n)
@@ -145,7 +156,9 @@ let compile env code =
              let l, env = env#allocate in
              let env, call = call env ".string" 1 false in
              (env, Mov (M ("$" ^ s), l) :: call)
-             
+    | SEXP (tag, c) -> 
+        let env, code = call env "L.sexp" (c + 1) true in
+        (env, [Push (L (tag_hash tag))] @ code)  
     | LD x ->
              let s, env' = (env#global x)#allocate in
              env',
